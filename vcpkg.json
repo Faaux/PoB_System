@@ -1,0 +1,5 @@
+{
+  "name": "coro-funsies",
+  "version": "0.1",
+  "dependencies": [ "sdl2", "lua" ]
+}
