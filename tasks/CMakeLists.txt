@@ -5,7 +5,7 @@ cmake_minimum_required (VERSION 3.8)
 
 
 # Add source to this project's executable.
-add_library (tasks  
+add_library (tasks STATIC
 	"include/tasks/detail/win32.hpp"
 
 	"include/tasks/config.h"

@@ -9,8 +9,8 @@ namespace detail {
 
 struct shared_task_waiter
 {
-	std::coroutine_handle<> m_continuation;
-	shared_task_waiter* m_next = nullptr;
+	std::coroutine_handle<> continuation_;
+	shared_task_waiter* next_ = nullptr;
 };
 
 template < typename P >
@@ -31,21 +31,21 @@ struct shared_final_awaitable
 		// Exchange operation needs to be 'release' so that subsequent awaiters have
 		// visibility of the result. Also needs to be 'acquire' so we have visibility
 		// of writes to the waiters list.
-		void* const valueReadyValue = &promise;
-		void* waiters = promise.m_waiters.exchange( valueReadyValue, std::memory_order_acq_rel );
+		void* const value_ready_value = &promise;
+		void* waiters = promise.waiters_.exchange( value_ready_value, std::memory_order_acq_rel );
 		if ( waiters != nullptr ) {
 			shared_task_waiter* waiter = static_cast< shared_task_waiter* >( waiters );
-			while ( waiter->m_next != nullptr ) {
+			while ( waiter->next_ != nullptr ) {
 				// Read the m_next pointer before resuming the coroutine
 				// since resuming the coroutine may destroy the shared_task_waiter value.
-				auto* next = waiter->m_next;
-				waiter->m_continuation.resume();
+				auto* next = waiter->next_;
+				waiter->continuation_.resume();
 				waiter = next;
 			}
 
 			// Resume last waiter in tail position to allow it to potentially
 			// be compiled as a tail-call.
-			waiter->m_continuation.resume();
+			waiter->continuation_.resume();
 		}
 	}
 };
@@ -62,13 +62,13 @@ struct shared_promise_base
 
 	bool is_ready() const noexcept
 	{
-		const void* const valueReadyValue = this;
-		return m_waiters.load( std::memory_order_acquire ) == valueReadyValue;
+		const void* const value_ready_value = this;
+		return waiters_.load( std::memory_order_acquire ) == value_ready_value;
 	}
 
 	void add_ref() noexcept
 	{
-		m_refCount.fetch_add( 1, std::memory_order_relaxed );
+		ref_count_.fetch_add( 1, std::memory_order_relaxed );
 	}
 
 	/// Decrement the reference count.
@@ -79,7 +79,7 @@ struct shared_promise_base
 	/// call destroy() on the coroutine handle.
 	bool try_detach() noexcept
 	{
-		return m_refCount.fetch_sub( 1, std::memory_order_acq_rel ) != 1;
+		return ref_count_.fetch_sub( 1, std::memory_order_acq_rel ) != 1;
 	}
 
 	/// Try to enqueue a waiter to the list of waiters.
@@ -100,7 +100,7 @@ struct shared_promise_base
 	bool try_await( shared_task_waiter* waiter, std::coroutine_handle<> coroutine )
 	{
 		void* const valueReadyValue = this;
-		void* const notStartedValue = &this->m_waiters;
+		void* const notStartedValue = &this->waiters_;
 		constexpr void* startedNoWaitersValue = static_cast< shared_task_waiter* >( nullptr );
 
 		// NOTE: If the coroutine is not yet started then the first waiter
@@ -114,13 +114,13 @@ struct shared_promise_base
 		// tasks in a row.
 
 		// Start the coroutine if not already started.
-		void* oldWaiters = m_waiters.load( std::memory_order_acquire );
+		void* oldWaiters = waiters_.load( std::memory_order_acquire );
 		if ( oldWaiters == notStartedValue
-			 && m_waiters.compare_exchange_strong(
+			 && waiters_.compare_exchange_strong(
 				 oldWaiters, startedNoWaitersValue, std::memory_order_relaxed ) ) {
 			// Start the task executing.
 			coroutine.resume();
-			oldWaiters = m_waiters.load( std::memory_order_acquire );
+			oldWaiters = waiters_.load( std::memory_order_acquire );
 		}
 
 		// Enqueue the waiter into the list of waiting coroutines.
@@ -130,8 +130,8 @@ struct shared_promise_base
 				return false;
 			}
 
-			waiter->m_next = static_cast< shared_task_waiter* >( oldWaiters );
-		} while ( !m_waiters.compare_exchange_weak( oldWaiters,
+			waiter->next_ = static_cast< shared_task_waiter* >( oldWaiters );
+		} while ( !waiters_.compare_exchange_weak( oldWaiters,
 													static_cast< void* >( waiter ),
 													std::memory_order_release,
 													std::memory_order_acquire ) );
@@ -139,7 +139,7 @@ struct shared_promise_base
 		return true;
 	}
 
-	std::atomic< std::uint32_t > m_refCount = 1;
+	std::atomic< std::uint32_t > ref_count_ = 1;
 
 	// Value is either
 	// - nullptr          - indicates started, no waiters
@@ -148,7 +148,7 @@ struct shared_promise_base
 	// - other            - pointer to head item in linked-list of waiters.
 	//                      values are of type 'cppcoro::shared_task_waiter'.
 	//                      indicates that the coroutine has been started.
-	std::atomic< void* > m_waiters;
+	std::atomic< void* > waiters_;
 };
 
 template < typename Task, typename T >
@@ -265,7 +265,7 @@ public:
 
 	bool await_suspend( std::coroutine_handle<> continuation ) noexcept
 	{
-		waiter_.m_continuation = continuation;
+		waiter_.continuation_ = continuation;
 		return coroutine_.promise().try_await( &waiter_, coroutine_ );
 	}
 
