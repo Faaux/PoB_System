@@ -11,4 +11,6 @@ find_package(SDL2 REQUIRED)
 find_package(Lua REQUIRED)
 
 # Include sub-projects.
+add_subdirectory ("tasks")
 add_subdirectory ("pob_system")
+add_subdirectory ("tests")

@@ -1,5 +1,5 @@
 {
-  "name": "coro-funsies",
+  "name": "pob-system",
   "version": "0.1",
-  "dependencies": [ "sdl2", "lua" ]
+  "dependencies": [ "sdl2", "lua", "catch2" ]
 }
