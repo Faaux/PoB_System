@@ -7,7 +7,7 @@
 
 #include <filesystem>
 
-int main( int argc, char* argv[] )
+int main( int, char* )
 {
 	std::filesystem::current_path( "c:\\Projects\\PoB_System\\PoBData" );
 
@@ -30,6 +30,7 @@ int main( int argc, char* argv[] )
 			}
 		}
 
+		state.lua_state.checkSubPrograms();
 		state.lua_state.onFrame();
 
 		// Randomly change the colour

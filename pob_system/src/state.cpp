@@ -9,6 +9,9 @@
 
 lua_state_t::lua_state_t( state_t* state ) : state( state )
 {
+	static int lua_id = 1;
+	id = lua_id++;
+
 	l = luaL_newstate();
 
 	luaL_openlibs( l );
@@ -29,42 +32,27 @@ lua_state_t::lua_state_t( state_t* state ) : state( state )
 	}
 
 	// Register callbacks
-	lua_pushcfunction(
-		l, []( lua_State* l ) -> int { return state_t::instance->lua_state.set_window_title(); } );
-	lua_setglobal( l, "SetWindowTitle" );
 
-	lua_pushcfunction( l,
-					   []( lua_State* l ) -> int { return state_t::instance->lua_state.set_main_object(); } );
-	lua_setglobal( l, "SetMainObject" );
+#define LUAFUNCTION( luaName, funcName )                                                                 \
+	lua_pushcfunction( l, []( lua_State* ) -> int { return state_t::instance->lua_state.funcName(); } ); \
+	lua_setglobal( l, #luaName );
 
-	lua_pushcfunction( l, []( lua_State* l ) -> int { return state_t::instance->lua_state.get_time(); } );
-	lua_setglobal( l, "GetTime" );
+	LUAFUNCTION( SetWindowTitle, set_window_title );
+	LUAFUNCTION( SetMainObject, set_main_object );
+	LUAFUNCTION( GetTime, get_time );
+	LUAFUNCTION( RenderInit, render_init );
+	LUAFUNCTION( ConPrintf, con_print_f );
+	LUAFUNCTION( LoadModule, load_module );
+	LUAFUNCTION( PLoadModule, p_load_module );
+	LUAFUNCTION( PCall, p_call );
+	LUAFUNCTION( LaunchSubScript, launch_sub_script );
+#undef LUAFUNCTION
 
-	lua_pushcfunction( l, []( lua_State* l ) -> int { return state_t::instance->lua_state.render_init(); } );
-	lua_setglobal( l, "RenderInit" );
-
-	lua_pushcfunction( l, []( lua_State* l ) -> int { return state_t::instance->lua_state.con_print_f(); } );
-	lua_setglobal( l, "ConPrintf" );
-
-	lua_pushcfunction( l, []( lua_State* l ) -> int { return state_t::instance->lua_state.load_module(); } );
-	lua_setglobal( l, "LoadModule" );
-
-	lua_pushcfunction( l,
-					   []( lua_State* l ) -> int { return state_t::instance->lua_state.p_load_module(); } );
-	lua_setglobal( l, "PLoadModule" );
-
-	lua_pushcfunction( l, []( lua_State* l ) -> int { return state_t::instance->lua_state.p_call(); } );
-	lua_setglobal( l, "PCall" );
-
-	lua_pushcfunction(
-		l, []( lua_State* l ) -> int { return state_t::instance->lua_state.launch_sub_script(); } );
-	lua_setglobal( l, "LaunchSubScript" );
-
-#define STUB( n )                                     \
-	lua_pushcfunction( l, []( lua_State* l ) -> int { \
-		printf( n "\n" );                             \
-		return 0;                                     \
-	} );                                              \
+#define STUB( n )                                   \
+	lua_pushcfunction( l, []( lua_State* ) -> int { \
+		printf( n "\n" );                           \
+		return 0;                                   \
+	} );                                            \
 	lua_setglobal( l, n );
 
 	STUB( "SetDrawLayer" );
@@ -86,6 +74,22 @@ void lua_state_t::do_file( const char* file )
 {
 	if ( luaL_dofile( l, file ) != LUA_OK ) {
 		logLuaError();
+	}
+}
+
+void lua_state_t::checkSubPrograms()
+{
+	auto subs = std::move( sub_programs );
+	for ( auto&& task : subs ) {
+		if ( task.await_ready() ) {
+			auto sub_state = task.join();
+			auto sub_id = sub_state->get_id();
+			// ToDo Finish SubScript here
+
+		} else {
+			// Task not yet ready, push to running sub programs
+			sub_programs.push_back( std::move( task ) );
+		}
 	}
 }
 
@@ -250,24 +254,37 @@ int lua_state_t::launch_sub_script()
 	// TODO: Call OnSubError
 	// TODO: Call OnSubFinished
 
-	int n = lua_gettop( l );
-	int argsCount = n - 3;
-	auto& sub = sub_programs.emplace_back( nullptr );
+	int sub_id = -1;
+	sub_programs.emplace_back( [ & ]() -> cb::task< std::shared_ptr< lua_state_t >, true > {
+		auto sub_state = std::make_shared< lua_state_t >( nullptr );
+		sub_id = sub_state->get_id();
+		auto& sub = *sub_state;
 
-	const char* script = luaL_checkstring( l, 1 );
-	if ( script[ 0 ] == '#' && script[ 1 ] == '@' ) {
-		script = script + 2;
-	}
+		int n = lua_gettop( l );
+		int argsCount = n - 3;
 
-	luaL_loadstring( sub.l, script );
-	lua_xmove( l, sub.l, argsCount );
+		const char* script = luaL_checkstring( l, 1 );
+		if ( script[ 0 ] == '#' && script[ 1 ] == '@' ) {
+			script = script + 2;
+		}
 
-	if ( lua_pcall( sub.l, argsCount, LUA_MULTRET, 0 ) != LUA_OK ) {
-		dumpstack( sub.l );
-		sub.logLuaError();
-	}
+		luaL_loadstring( sub.l, script );
+		lua_xmove( l, sub.l, argsCount );
 
-	return 0;
+		// Put us on another thread, do not use any captured reference beyond this point
+		co_await state->tp.schedule();
+
+		// On the other thread start the lua script
+		if ( lua_pcall( sub.l, argsCount, LUA_MULTRET, 0 ) != LUA_OK ) {
+			sub.logLuaError();
+		}
+
+		co_return sub_state;
+	}() );
+
+	lua_pushinteger( l, sub_id );
+
+	return 1;
 }
 
 int lua_state_t::dummy()

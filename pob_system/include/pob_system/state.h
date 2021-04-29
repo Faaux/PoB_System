@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <tasks/task.h>
+#include <tasks/static_thread_pool.h>
 
 // Forward Declare
 struct lua_State;
@@ -19,6 +21,12 @@ public:
 	~lua_state_t();
 
 	void do_file( const char* file );
+
+	void checkSubPrograms();
+	int get_id() const
+	{
+		return id;
+	}
 
 	// Helpers to call into lua
 	void onInit();
@@ -45,9 +53,10 @@ private:
 	void callParameterlessFunction( const char* name );
 	void logLuaError();
 
+	int id;
 	state_t* state;
 	lua_State* l;
-	std::vector< lua_state_t > sub_programs;
+	std::vector< cb::task< std::shared_ptr< lua_state_t >, true > > sub_programs;
 	int main_object_index = -1;
 };
 
@@ -71,6 +80,7 @@ public:
 	// No getters and setters, know what you change
 	lua_state_t lua_state{ this };
 	render_state_t render_state;
+	cb::static_thread_pool tp;
 
 	static state_t* instance;
 };
