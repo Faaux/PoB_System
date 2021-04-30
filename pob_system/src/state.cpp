@@ -14,6 +14,12 @@ lua_state_t::lua_state_t( state_t* state ) : state( state )
 
 	l = luaL_newstate();
 
+	lua_pushlightuserdata( l, (void*)this );
+	lua_rawseti( l, LUA_REGISTRYINDEX, 0 );
+	lua_pushcfunction( l, traceback );
+	lua_pushvalue( l, -1 );
+	lua_setfield( l, LUA_REGISTRYINDEX, "traceback" );
+
 	luaL_openlibs( l );
 
 	{
@@ -33,21 +39,58 @@ lua_state_t::lua_state_t( state_t* state ) : state( state )
 
 	// Register callbacks
 
-#define LUAFUNCTION( luaName, funcName )                                                                 \
-	lua_pushcfunction( l, []( lua_State* ) -> int { return state_t::instance->lua_state.funcName(); } ); \
+	// -- Global Functions
+
+#define LUA_GLOBAL_FUNCTION( luaName, funcName )                                                      \
+	lua_pushcfunction( l, []( lua_State* l ) -> int { return get_current_state( l )->funcName(); } ); \
 	lua_setglobal( l, #luaName );
 
-	LUAFUNCTION( SetWindowTitle, set_window_title );
-	LUAFUNCTION( SetMainObject, set_main_object );
-	LUAFUNCTION( GetTime, get_time );
-	LUAFUNCTION( RenderInit, render_init );
-	LUAFUNCTION( ConPrintf, con_print_f );
-	LUAFUNCTION( LoadModule, load_module );
-	LUAFUNCTION( PLoadModule, p_load_module );
-	LUAFUNCTION( PCall, p_call );
-	LUAFUNCTION( LaunchSubScript, launch_sub_script );
-#undef LUAFUNCTION
+	LUA_GLOBAL_FUNCTION( SetWindowTitle, set_window_title );
+	LUA_GLOBAL_FUNCTION( SetMainObject, set_main_object );
+	LUA_GLOBAL_FUNCTION( GetTime, get_time );
+	LUA_GLOBAL_FUNCTION( RenderInit, render_init );
+	LUA_GLOBAL_FUNCTION( ConPrintf, con_print_f );
+	LUA_GLOBAL_FUNCTION( LoadModule, load_module );
+	LUA_GLOBAL_FUNCTION( PLoadModule, p_load_module );
+	LUA_GLOBAL_FUNCTION( PCall, p_call );
+	LUA_GLOBAL_FUNCTION( LaunchSubScript, launch_sub_script );
+	LUA_GLOBAL_FUNCTION( GetScriptPath, get_script_path );
+	LUA_GLOBAL_FUNCTION( GetRuntimePath, get_runtime_path );
+	LUA_GLOBAL_FUNCTION( MakeDir, make_dir );
+#undef LUA_GLOBAL_FUNCTION
 
+	// -- Class Like
+	// -- -- Image
+	lua_newtable( l );		 // Image handle metatable
+	lua_pushvalue( l, -1 );	 // Push image handle metatable
+
+	lua_pushcclosure(
+		l, []( lua_State* l ) -> int { return get_current_state( l )->new_image_handle(); }, 1 );
+	lua_setglobal( l, "NewImageHandle" );
+	lua_pushvalue( l, -1 );	 // Push image handle metatable
+	lua_setfield( l, -2, "__index" );
+
+#define LUA_IMAGE_FUNCTION( funcName )                                                                  \
+	lua_pushcfunction( l, []( lua_State* l ) -> int {                                                   \
+		auto state = get_current_state( l );                                                            \
+		state->assert( state->is_image_handle( 1 ), "imgHandle:%s() must be used on an image handle" ); \
+		return state->funcName( state->get_image_handle( 1 ) );                                         \
+	} );
+
+	LUA_IMAGE_FUNCTION( img_handle_gc );
+	lua_setfield( l, -2, "__gc" );
+	LUA_IMAGE_FUNCTION( img_handle_load );
+	lua_setfield( l, -2, "Load" );
+	LUA_IMAGE_FUNCTION( img_handle_is_valid );
+	lua_setfield( l, -2, "IsValid" );
+	LUA_IMAGE_FUNCTION( img_handle_is_loading );
+	lua_setfield( l, -2, "IsLoading" );
+	LUA_IMAGE_FUNCTION( img_handle_image_size );
+	lua_setfield( l, -2, "ImageSize" );
+	lua_setfield( l, LUA_REGISTRYINDEX, IMAGE_META_HANDLE );
+
+#undef LUA_IMAGE_FUNCTION
+	// -- Stubs
 #define STUB( n )                                   \
 	lua_pushcfunction( l, []( lua_State* ) -> int { \
 		printf( n "\n" );                           \
@@ -61,8 +104,22 @@ lua_state_t::lua_state_t( state_t* state ) : state( state )
 	STUB( "SetDrawColor" );
 	STUB( "DrawImage" );
 	STUB( "DrawStringWidth" );
+	STUB( "ConExecute" );
 
 #undef STUB
+
+	// Push args
+	if ( state ) {
+		for ( int i = 0; i < state->argc; i++ ) {
+			lua_pushstring( l, state->argv[ i ] );
+		}
+		lua_createtable( l, state->argc - 1, 1 );
+		for ( int i = 0; i < state->argc; i++ ) {
+			lua_pushstring( l, state->argv[ i ] );
+			lua_rawseti( l, -2, i );
+		}
+		lua_setglobal( l, "arg" );
+	}
 }
 
 lua_state_t::~lua_state_t()
@@ -72,7 +129,7 @@ lua_state_t::~lua_state_t()
 
 void lua_state_t::do_file( const char* file )
 {
-	if ( luaL_dofile( l, file ) != LUA_OK ) {
+	if ( luaL_dofile( l, file ) ) {
 		logLuaError();
 	}
 }
@@ -114,6 +171,32 @@ void lua_state_t::assert( bool cond, const char* fmt, ... ) const
 	}
 }
 
+lua_state_t* lua_state_t::get_current_state( lua_State* l )
+{
+	lua_rawgeti( l, LUA_REGISTRYINDEX, 0 );
+	auto state = (lua_state_t*)lua_touserdata( l, -1 );
+	lua_pop( l, 1 );
+	return state;
+}
+
+bool lua_state_t::is_image_handle( int index ) const
+{
+	if ( lua_type( l, index ) != LUA_TUSERDATA || lua_getmetatable( l, index ) == 0 ) {
+		return false;
+	}
+	lua_getfield( l, LUA_REGISTRYINDEX, IMAGE_META_HANDLE );
+	int ret = lua_rawequal( l, -2, -1 );
+	lua_pop( l, 2 );
+	return ret;
+}
+
+ImageHandle& lua_state_t::get_image_handle( int index ) const
+{
+	auto handle = static_cast< ImageHandle* >( lua_touserdata( l, index ) );
+	lua_remove( l, 1 );
+	return *handle;
+}
+
 int lua_state_t::set_window_title()
 {
 	luaL_checktype( l, 1, LUA_TSTRING );
@@ -121,6 +204,7 @@ int lua_state_t::set_window_title()
 		fprintf( stderr, "Can not set window_state with no valid state" );
 		return 0;
 	}
+
 	state->render_state.window_title = lua_tostring( l, 1 );
 	return 0;
 }
@@ -173,14 +257,11 @@ int lua_state_t::con_print_f()
 	lua_pop( l, 1 );
 
 	// Call on frame
-	if ( lua_pcall( l, n, 1, 0 ) != LUA_OK ) {
+	if ( lua_pcall( l, n , 1, 0 ) ) {
 		logLuaError();
-		lua_settop( l, 0 );
 		return 0;
 	}
-
 	printf( "%s\n", luaL_checkstring( l, 1 ) );
-	lua_settop( l, 0 );
 
 	return 0;
 }
@@ -233,7 +314,6 @@ int lua_state_t::p_call()
 	int n = lua_gettop( l );
 	assert( n >= 1, "Usage: PCall(func[, ...])" );
 	assert( lua_isfunction( l, 1 ), "PCall() argument 1: expected function, got %t", 1 );
-	dumpstack( l );
 	lua_getfield( l, LUA_REGISTRYINDEX, "traceback" );
 	lua_insert( l, 1 );	 // Insert traceback function at start of stack
 	int err = lua_pcall( l, n - 1, LUA_MULTRET, 1 );
@@ -275,7 +355,7 @@ int lua_state_t::launch_sub_script()
 		co_await state->tp.schedule();
 
 		// On the other thread start the lua script
-		if ( lua_pcall( sub.l, argsCount, LUA_MULTRET, 0 ) != LUA_OK ) {
+		if ( lua_pcall( sub.l, argsCount, LUA_MULTRET, 0 ) ) {
 			sub.logLuaError();
 		}
 
@@ -285,6 +365,95 @@ int lua_state_t::launch_sub_script()
 	lua_pushinteger( l, sub_id );
 
 	return 1;
+}
+
+int lua_state_t::get_script_path()
+{
+	lua_pushstring( l, std::filesystem::current_path().string().c_str() );
+	return 1;
+}
+int lua_state_t::get_runtime_path()
+{
+	lua_pushstring( l, std::filesystem::current_path().string().c_str() );
+	return 1;
+}
+int lua_state_t::make_dir()
+{
+	int n = lua_gettop( l );
+	assert( n >= 1, "Usage: MakeDir(path)" );
+	assert( lua_isstring( l, 1 ), "MakeDir() argument 1: expected string, got %t", 1 );
+
+	std::error_code ec;
+	if ( !std::filesystem::create_directory( lua_tostring( l, 1 ), ec ) ) {
+		lua_pushnil( l );
+		lua_pushstring( l, ec.message().c_str() );
+		return 2;
+	} else {
+		lua_pushboolean( l, true );
+		return 1;
+	}
+}
+
+int lua_state_t::new_image_handle()
+{
+	ImageHandle* imgHandle = (ImageHandle*)lua_newuserdata( l, sizeof( ImageHandle ) );
+	new ( imgHandle ) ImageHandle();
+	lua_pushvalue( l, lua_upvalueindex( 1 ) );
+	lua_setmetatable( l, -2 );
+	return 1;
+}
+int lua_state_t::img_handle_gc( ImageHandle& handle )
+{
+	handle.~ImageHandle();
+	return 0;
+}
+int lua_state_t::img_handle_load( ImageHandle& handle )
+{
+	int n = lua_gettop( l );
+	assert( n >= 1, "Usage: imgHandle:Load(fileName[, flag1[, flag2...]])" );
+	assert( lua_isstring( l, 1 ), "imgHandle:Load() argument 1: expected string, got %t", 1 );
+
+	const char* fileName = lua_tostring( l, 1 );
+	bool mipmaps = true;
+	bool async = false;
+	bool clamp = false;
+	for ( int f = 2; f <= n; f++ ) {
+		if ( !lua_isstring( l, f ) ) {
+			continue;
+		}
+		const char* flag = lua_tostring( l, f );
+		if ( flag == Image::ASYNC_FLAG ) {
+			async = true;
+		} else if ( flag == Image::CLAMP_FLAG ) {
+			clamp = true;
+		} else if ( flag == Image::MIPMAP_FLAG ) {
+			mipmaps = false;
+		} else {
+			assert( false, "imgHandle:Load(): unrecognised flag '%s'", flag );
+		}
+	}
+	handle.image = std::make_unique< Image >( fileName, mipmaps, clamp, async );
+
+	return 0;
+}
+
+int lua_state_t::img_handle_is_valid( ImageHandle& handle )
+{
+	lua_pushboolean( l, static_cast< bool >( handle.image ) );
+	return 1;
+}
+
+int lua_state_t::img_handle_is_loading( ImageHandle& handle )
+{
+	lua_pushboolean( l, handle.image->is_loading() );
+	return 1;
+}
+
+int lua_state_t::img_handle_image_size( ImageHandle& handle )
+{
+	lua_pushinteger( l, handle.image->width() );
+	lua_pushinteger( l, handle.image->height() );
+	return 2;
 }
 
 int lua_state_t::dummy()
@@ -321,7 +490,7 @@ void lua_state_t::callParameterlessFunction( const char* name )
 	pushCallableOntoStack( name );
 
 	// Call on frame
-	if ( lua_pcall( l, 1, 0, 0 ) != LUA_OK ) {
+	if ( lua_pcall( l, 1, 0, 0 ) ) {
 		logLuaError();
 		lua_settop( l, 0 );
 		return;
@@ -333,7 +502,7 @@ void lua_state_t::callParameterlessFunction( const char* name )
 
 void lua_state_t::logLuaError()
 {
-	fprintf( stderr, "%s\n", lua_tostring( l, -1 ) );
+	fprintf( stderr, "%d: %s\n", id, lua_tostring( l, -1 ) );
 }
 
 render_state_t::~render_state_t()

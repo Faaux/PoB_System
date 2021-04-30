@@ -1,5 +1,26 @@
 {
   "name": "pob-system",
   "version": "0.1",
-  "dependencies": [ "sdl2", "lua", "catch2" ]
+  "dependencies": [
+    {
+      "name": "sdl2"
+    },
+    {
+      "name": "sdl2-image",
+      "features": [ "libjpeg-turbo" ]
+    },
+    {
+      "name": "catch2"
+    },
+    {
+      "name": "curl"
+    },
+    {
+      "name": "zlib"
+    },
+    {
+      "name": "luajit",
+      "platform": "windows"
+    }
+  ]
 }

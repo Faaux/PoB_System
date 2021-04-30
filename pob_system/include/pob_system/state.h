@@ -5,6 +5,8 @@
 #include <tasks/task.h>
 #include <tasks/static_thread_pool.h>
 
+#include <pob_system/image.h>
+
 // Forward Declare
 struct lua_State;
 struct SDL_Window;
@@ -33,7 +35,14 @@ public:
 	void onFrame();
 
 private:
+	// Constants
+	inline static const char* IMAGE_META_HANDLE = "uiimghandlemeta";
+
+	// Helper
 	void assert( bool cond, const char* fmt, ... ) const;
+	static lua_state_t* get_current_state( lua_State* l );
+	bool is_image_handle( int index ) const;
+	ImageHandle& get_image_handle( int index ) const;
 
 	// Callbacks
 	int set_window_title();
@@ -45,6 +54,16 @@ private:
 	int p_load_module();
 	int p_call();
 	int launch_sub_script();
+	int get_script_path();
+	int get_runtime_path();
+	int make_dir();
+	int new_image_handle();
+	int img_handle_gc( ImageHandle& handle );
+	int img_handle_load( ImageHandle& handle );
+	int img_handle_is_valid( ImageHandle& handle );
+	int img_handle_is_loading( ImageHandle& handle );
+	int img_handle_set_loading_priority( ImageHandle& handle );
+	int img_handle_image_size( ImageHandle& handle );
 	int dummy();
 
 	// Internal Helper to access the main lua table
@@ -81,6 +100,9 @@ public:
 	lua_state_t lua_state{ this };
 	render_state_t render_state;
 	cb::static_thread_pool tp;
+
+	int argc;
+	char** argv;
 
 	static state_t* instance;
 };

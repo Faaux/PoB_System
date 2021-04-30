@@ -5,7 +5,6 @@ set(VCPKG_LIBRARY_LINKAGE dynamic)
 if(PORT STREQUAL "sdl2")
     set(VCPKG_LIBRARY_LINKAGE static)
 endif()
-
-if(PORT STREQUAL "lua")
+if(PORT STREQUAL "sdl2-image")
     set(VCPKG_LIBRARY_LINKAGE static)
 endif()

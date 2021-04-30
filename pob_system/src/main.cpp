@@ -3,18 +3,26 @@
 
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#include <SDL_image.h>
 #include <lua.hpp>
 
 #include <filesystem>
 
-int main( int, char* )
+int main( int argc, char* argv[] )
 {
 	std::filesystem::current_path( "c:\\Projects\\PoB_System\\PoBData" );
 
 	SDL_Init( SDL_INIT_VIDEO );
 
+	int flags = IMG_INIT_JPG | IMG_INIT_PNG;
+	if ( ( flags & IMG_Init( flags ) ) != flags ) {
+		return -1;
+	}
+
 	// Lives till application close
 	state_t state;
+	state.argc = argc;
+	state.argv = argv;
 	state_t::instance = &state;
 
 	state.lua_state.do_file( "Launch.lua" );
@@ -43,6 +51,7 @@ int main( int, char* )
 		SDL_RenderPresent( state.render_state.renderer );
 	}
 
+	IMG_Quit();
 	SDL_Quit();
 	return 0;
 }
