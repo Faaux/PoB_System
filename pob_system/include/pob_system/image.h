@@ -16,6 +16,9 @@ public:
 	inline static const std::string_view MIPMAP_FLAG = "MIPMAP";
 
 	Image( const char* filename, bool mipmaps, bool clamp, bool load_async );
+	~Image();
+
+	void wait_for_load() const;
 
 	bool is_loading() const
 	{
@@ -44,6 +47,7 @@ private:
 
 	cb::task<> image_load_task_;
 	std::atomic< bool > is_loaded_ = false;
+	std::atomic< bool > is_loading_ = false;
 	SDL_Surface* surface_ = nullptr;
 	int width_ = 0;
 	int height_ = 0;
