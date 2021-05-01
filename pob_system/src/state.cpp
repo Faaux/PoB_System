@@ -57,6 +57,7 @@ lua_state_t::lua_state_t( state_t* state ) : state( state )
 	LUA_GLOBAL_FUNCTION( GetScriptPath, get_script_path );
 	LUA_GLOBAL_FUNCTION( GetRuntimePath, get_runtime_path );
 	LUA_GLOBAL_FUNCTION( MakeDir, make_dir );
+	LUA_GLOBAL_FUNCTION( GetScreenSize, screen_size );
 #undef LUA_GLOBAL_FUNCTION
 
 	// -- Class Like
@@ -90,6 +91,7 @@ lua_state_t::lua_state_t( state_t* state ) : state( state )
 	lua_setfield( l, LUA_REGISTRYINDEX, IMAGE_META_HANDLE );
 
 #undef LUA_IMAGE_FUNCTION
+
 	// -- Stubs
 #define STUB( n )                                   \
 	lua_pushcfunction( l, []( lua_State* ) -> int { \
@@ -100,7 +102,6 @@ lua_state_t::lua_state_t( state_t* state ) : state( state )
 
 	STUB( "SetDrawLayer" );
 	STUB( "SetViewport" );
-	STUB( "GetScreenSize" );
 	STUB( "SetDrawColor" );
 	STUB( "DrawImage" );
 	STUB( "DrawStringWidth" );
@@ -129,9 +130,13 @@ lua_state_t::~lua_state_t()
 
 void lua_state_t::do_file( const char* file )
 {
-	if ( luaL_dofile( l, file ) ) {
-		logLuaError();
-	}
+	[ & ]() -> cb::task<> {
+		co_await state->main_lua_thread.schedule();
+		if ( luaL_dofile( l, file ) ) {
+			logLuaError();
+		}
+	}()
+				   .join();
 }
 
 void lua_state_t::checkSubPrograms()
@@ -152,12 +157,22 @@ void lua_state_t::checkSubPrograms()
 
 void lua_state_t::onInit()
 {
-	callParameterlessFunction( "OnInit" );
+	// Run this on the main lua thread and wait for it to finish
+	// We do this because sub-scripts can also schedule on this thread to e.g update the ui
+	[ & ]() -> cb::task<> {
+		co_await state->main_lua_thread.schedule();
+		callParameterlessFunction( "OnInit" );
+	}()
+				   .join();
 }
 
 void lua_state_t::onFrame()
 {
-	callParameterlessFunction( "OnFrame" );
+	[ & ]() -> cb::task<> {
+		co_await state->main_lua_thread.schedule();
+		callParameterlessFunction( "OnFrame" );
+	}()
+				   .join();
 }
 
 void lua_state_t::assert( bool cond, const char* fmt, ... ) const
@@ -257,7 +272,7 @@ int lua_state_t::con_print_f()
 	lua_pop( l, 1 );
 
 	// Call on frame
-	if ( lua_pcall( l, n , 1, 0 ) ) {
+	if ( lua_pcall( l, n, 1, 0 ) ) {
 		logLuaError();
 		return 0;
 	}
@@ -328,31 +343,68 @@ int lua_state_t::p_call()
 
 int lua_state_t::launch_sub_script()
 {
-	// TODO: Put this on a different thread
-	// TODO: return id
-	// TODO: Forward calls from third parameter to OnSubCall
-	// TODO: Call OnSubError
-	// TODO: Call OnSubFinished
-
 	int sub_id = -1;
 	sub_programs.emplace_back( [ & ]() -> cb::task< std::shared_ptr< lua_state_t >, true > {
+		int n = lua_gettop( l );
+		assert( n >= 3, "Usage: LaunchSubScript(scriptText, funcList, subList[, ...])" );
+		for ( int i = 1; i <= 3; i++ ) {
+			assert( lua_isstring( l, i ), "LaunchSubScript() argument %d: expected string, got %t", i, i );
+		}
+		for ( int i = 4; i <= n; i++ ) {
+			assert(
+				lua_isnil( l, i ) || lua_isboolean( l, i ) || lua_isnumber( l, i ) || lua_isstring( l, i ),
+				"LaunchSubScript() argument %d: only nil, boolean, number and string types can be passed to "
+				"sub script",
+				i );
+		}
+
 		auto sub_state = std::make_shared< lua_state_t >( nullptr );
 		sub_id = sub_state->get_id();
 		auto& sub = *sub_state;
 
-		int n = lua_gettop( l );
 		int argsCount = n - 3;
 
-		const char* script = luaL_checkstring( l, 1 );
-		if ( script[ 0 ] == '#' && script[ 1 ] == '@' ) {
-			script = script + 2;
-		}
-
+		const char* script = lua_tostring( l, 1 );
 		luaL_loadstring( sub.l, script );
 		lua_xmove( l, sub.l, argsCount );
 
+		// Use string here to copy the value since it can be GCed otherwise.
+		std::string sync_override_calls = lua_tostring( l, 2 );	  // Sync call to main with return
+		std::string async_override_calls = lua_tostring( l, 3 );  // Async call to main
+
 		// Put us on another thread, do not use any captured reference beyond this point
-		co_await state->tp.schedule();
+		co_await state->global_thread_pool.schedule();
+
+		// Override global functions that should be called on the main thread
+		{
+			std::string token;
+			std::istringstream tokenStream( sync_override_calls );
+			while ( std::getline( tokenStream, token, ',' ) ) {
+				lua_pushstring( sub.l, token.c_str() );
+				lua_pushcclosure(
+					sub.l,
+					[]( lua_State* local ) -> int {
+						return get_current_state( local )->call_main_from_sub( true );
+					},
+					1 );
+				lua_setglobal( sub.l, token.c_str() );
+			}
+		}
+
+		{
+			std::string token;
+			std::istringstream tokenStream( async_override_calls );
+			while ( std::getline( tokenStream, token, ',' ) ) {
+				lua_pushstring( sub.l, token.c_str() );
+				lua_pushcclosure(
+					sub.l,
+					[]( lua_State* local ) -> int {
+						return get_current_state( local )->call_main_from_sub( false );
+					},
+					1 );
+				lua_setglobal( sub.l, token.c_str() );
+			}
+		}
 
 		// On the other thread start the lua script
 		if ( lua_pcall( sub.l, argsCount, LUA_MULTRET, 0 ) ) {
@@ -393,7 +445,16 @@ int lua_state_t::make_dir()
 		return 1;
 	}
 }
+int lua_state_t::screen_size()
+{
+	assert( state, "Can only be called from the main thread" );
+	int w, h;
+	SDL_GetWindowSize( state->render_state.window, &w, &h );
 
+	lua_pushinteger( l, w );
+	lua_pushinteger( l, h );
+	return 2;
+}
 int lua_state_t::new_image_handle()
 {
 	ImageHandle* imgHandle = (ImageHandle*)lua_newuserdata( l, sizeof( ImageHandle ) );
@@ -503,6 +564,56 @@ void lua_state_t::callParameterlessFunction( const char* name )
 void lua_state_t::logLuaError()
 {
 	fprintf( stderr, "%d: %s\n", id, lua_tostring( l, -1 ) );
+}
+
+int lua_state_t::call_main_from_sub( bool sync )
+{
+	const char* name = lua_tostring( l, lua_upvalueindex( 1 ) );
+
+	// Schedule call and wait for it
+	auto task = []( lua_State* l, const char* name, bool sync ) -> cb::task< std::vector< lua_value > > {
+		std::vector< lua_value > values = pop_save_values( l, 1 );
+		std::string funcName = name;
+
+		co_await state_t::instance->main_lua_thread.schedule();
+		auto main_l = state_t::instance->lua_state.l;
+		int ret_n = lua_gettop( main_l ) + 1;
+
+		// Build Function call
+		state_t::instance->lua_state.pushCallableOntoStack( "OnSubCall" );
+		lua_pushstring( main_l, funcName.c_str() );
+
+		push_saved_values( main_l, values );
+
+		if ( lua_pcall( main_l, static_cast< int >( values.size() + 2 ), LUA_MULTRET, 0 ) ) {
+			state_t::instance->lua_state.logLuaError();
+		}
+
+		std::vector< lua_value > return_values;
+		if ( sync ) {
+			// Get return values
+			int n = lua_gettop( main_l );
+			for ( int i = ret_n; i <= n; i++ ) {
+				state_t::instance->lua_state.assert( lua_isnil( main_l, i ) || lua_isboolean( main_l, i )
+														 || lua_isnumber( main_l, i )
+														 || lua_isstring( main_l, i ),
+													 "OnSubCall() return %d: only nil, boolean, number and "
+													 "string can be returned to sub script",
+													 i - ret_n + 1 );
+			}
+
+			return_values = pop_save_values( main_l, ret_n );
+		}
+		co_return return_values;
+	}( l, name, sync );
+
+	if ( sync ) {
+		auto return_values = task.join();
+		push_saved_values( l, return_values );
+		return static_cast< int >( return_values.size() );
+	}
+
+	return 0;
 }
 
 render_state_t::~render_state_t()

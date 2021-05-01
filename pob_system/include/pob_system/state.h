@@ -6,6 +6,7 @@
 #include <tasks/static_thread_pool.h>
 
 #include <pob_system/image.h>
+#include <pob_system/lua_helper.h>
 
 // Forward Declare
 struct lua_State;
@@ -18,6 +19,8 @@ class state_t;
 // Is also the home for all API callbacks
 class lua_state_t
 {
+	friend std::vector< lua_value > pop_save_values( lua_State*, int );
+
 public:
 	lua_state_t( state_t* state );
 	~lua_state_t();
@@ -40,8 +43,8 @@ private:
 
 	// Helper
 	void assert( bool cond, const char* fmt, ... ) const;
-	static lua_state_t* get_current_state( lua_State* l );
 	bool is_image_handle( int index ) const;
+	static lua_state_t* get_current_state( lua_State* l );
 	ImageHandle& get_image_handle( int index ) const;
 
 	// Callbacks
@@ -57,6 +60,7 @@ private:
 	int get_script_path();
 	int get_runtime_path();
 	int make_dir();
+	int screen_size();
 	int new_image_handle();
 	int img_handle_gc( ImageHandle& handle );
 	int img_handle_load( ImageHandle& handle );
@@ -71,6 +75,9 @@ private:
 	void pushCallableOntoStack( const char* name );
 	void callParameterlessFunction( const char* name );
 	void logLuaError();
+
+	// SubScript Helpers
+	int call_main_from_sub( bool sync );
 
 	int id;
 	state_t* state;
@@ -99,7 +106,8 @@ public:
 	// No getters and setters, know what you change
 	lua_state_t lua_state{ this };
 	render_state_t render_state;
-	cb::static_thread_pool tp;
+	cb::static_thread_pool global_thread_pool{ std::thread::hardware_concurrency() - 1 };
+	cb::static_thread_pool main_lua_thread{ 1 };
 
 	int argc;
 	char** argv;

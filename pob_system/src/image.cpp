@@ -41,7 +41,7 @@ cb::task<> Image::load_image()
 	auto state = state_t::instance;
 
 	// Move to other thread and start loading
-	co_await state->tp.schedule();
+	co_await state->global_thread_pool.schedule();
 	surface_ = IMG_Load( filename_.c_str() );
 	if ( !surface_ ) {
 		printf( "IMG_Load(%s): %s\n", filename_.c_str(), IMG_GetError() );
