@@ -8,37 +8,34 @@
 #include <tasks/config.h>
 
 #if CORO_WINDOWS
-# include <tasks/detail/win32.hpp>
+#include <tasks/detail/win32.hpp>
 #else
-# include <mutex>
-# include <condition_variable>
+#include <condition_variable>
+#include <mutex>
 #endif
 
 namespace cppcoro
 {
-	class auto_reset_event
-	{
-	public:
+class auto_reset_event
+{
+   public:
+    auto_reset_event(bool initiallySet = false);
 
-		auto_reset_event(bool initiallySet = false);
+    ~auto_reset_event();
 
-		~auto_reset_event();
+    void set();
 
-		void set();
+    void wait();
 
-		void wait();
-
-	private:
-
+   private:
 #if CORO_WINDOWS
-		cppcoro::detail::win32::safe_handle m_event;
+    cppcoro::detail::win32::safe_handle m_event;
 #else
-		std::mutex m_mutex;
-		std::condition_variable m_cv;
-		bool m_isSet;
+    std::mutex m_mutex;
+    std::condition_variable m_cv;
+    bool m_isSet;
 #endif
-
-	};
-}
+};
+}  // namespace cppcoro
 
 #endif
