@@ -1,4 +1,5 @@
 #include <SDL.h>
+#include <pob_system/keys.h>
 #include <pob_system/lua_helper.h>
 #include <pob_system/state.h>
 
@@ -57,6 +58,7 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
     LUA_GLOBAL_FUNCTION(GetRuntimePath, get_runtime_path);
     LUA_GLOBAL_FUNCTION(MakeDir, make_dir);
     LUA_GLOBAL_FUNCTION(GetScreenSize, screen_size);
+    LUA_GLOBAL_FUNCTION(IsKeyDown, is_key_down_callback);
 #undef LUA_GLOBAL_FUNCTION
 
     // -- Class Like
@@ -109,7 +111,6 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
     STUB("DrawImage");
     STUB("DrawStringWidth");
     STUB("ConExecute");
-    STUB("IsKeyDown");
 
 #undef STUB
 
@@ -139,7 +140,7 @@ void lua_state_t::do_file(const char* file)
         co_await state->main_lua_thread.schedule();
         if (luaL_dofile(l, file))
         {
-            logLuaError();
+            log_lua_error();
         }
     }()
                  .join();
@@ -161,6 +162,134 @@ void lua_state_t::onFrame()
         callParameterlessFunction("OnFrame");
     }()
                  .join();
+}
+
+void lua_state_t::onChar(char c)
+{
+    [c]() -> cb::task<>
+    {
+        co_await state_t::instance->main_lua_thread.schedule();
+        auto& main_state = state_t::instance->lua_state;
+        main_state.pushCallableOntoStack("OnChar");
+        lua_pushfstring(main_state.l, "%c", c);
+
+        if (lua_pcall(main_state.l, 2, 0, 0))
+        {
+            main_state.log_lua_error();
+        }
+    }()
+                 .join();
+}
+void lua_state_t::onKeyDown(SDL_Keycode key)
+{
+    [key]() -> cb::task<>
+    {
+        co_await state_t::instance->main_lua_thread.schedule();
+        auto& main_state = state_t::instance->lua_state;
+        main_state.pushCallableOntoStack("OnKeyDown");
+
+        auto text = get_key_name(key);
+        if (text.empty())
+        {
+            lua_pushfstring(main_state.l, "%c", key);
+        }
+        else
+        {
+            lua_pushstring(main_state.l, text.data());
+        }
+
+        lua_pushboolean(main_state.l, false);
+
+        if (lua_pcall(main_state.l, 3, 0, 0))
+        {
+            main_state.log_lua_error();
+        }
+    }()
+                   .join();
+}
+void lua_state_t::onKeyUp(SDL_Keycode key)
+{
+    [key]() -> cb::task<>
+    {
+        co_await state_t::instance->main_lua_thread.schedule();
+        auto& main_state = state_t::instance->lua_state;
+        main_state.pushCallableOntoStack("OnKeyUp");
+
+        auto text = get_key_name(key);
+        if (text.empty())
+        {
+            lua_pushfstring(main_state.l, "%c", key);
+        }
+        else
+        {
+            lua_pushstring(main_state.l, text.data());
+        }
+
+        if (lua_pcall(main_state.l, 2, 0, 0))
+        {
+            main_state.log_lua_error();
+        }
+    }()
+                   .join();
+}
+
+void lua_state_t::onMouseDown(int mb, bool double_click)
+{
+    [mb, double_click]() -> cb::task<>
+    {
+        co_await state_t::instance->main_lua_thread.schedule();
+        auto& main_state = state_t::instance->lua_state;
+        main_state.pushCallableOntoStack("OnKeyDown");
+
+        auto text = get_mouse_name(mb);
+        lua_pushstring(main_state.l, text.data());
+
+        lua_pushboolean(main_state.l, double_click);
+
+        if (lua_pcall(main_state.l, 3, 0, 0))
+        {
+            main_state.log_lua_error();
+        }
+    }()
+                                .join();
+}
+
+void lua_state_t::onMouseUp(int mb)
+{
+    [mb]() -> cb::task<>
+    {
+        co_await state_t::instance->main_lua_thread.schedule();
+        auto& main_state = state_t::instance->lua_state;
+        main_state.pushCallableOntoStack("OnKeyUp");
+
+        auto text = get_mouse_name(mb);
+        lua_pushstring(main_state.l, text.data());
+
+        if (lua_pcall(main_state.l, 2, 0, 0))
+        {
+            main_state.log_lua_error();
+        }
+    }()
+                  .join();
+}
+
+bool lua_state_t::canExit()
+{
+    return []() -> cb::task<bool>
+    {
+        co_await state_t::instance->main_lua_thread.schedule();
+        bool ret = true;
+        auto& main_state = state_t::instance->lua_state;
+        main_state.pushCallableOntoStack("CanExit");
+        if (lua_pcall(main_state.l, 1, 0, 0))
+        {
+            main_state.log_lua_error();
+        }
+        ret = !!lua_toboolean(main_state.l, -1);
+        lua_pop(main_state.l, 1);
+        co_return ret;
+    }()
+                       .join();
 }
 
 void lua_state_t::assert(bool cond, const char* fmt, ...) const
@@ -266,7 +395,7 @@ int lua_state_t::con_print_f()
     // Call on frame
     if (lua_pcall(l, n, 1, 0))
     {
-        logLuaError();
+        log_lua_error();
         return 0;
     }
     printf("%s\n", luaL_checkstring(l, 1));
@@ -342,7 +471,8 @@ int lua_state_t::p_call()
 int lua_state_t::launch_sub_script()
 {
     int sub_id = -1;
-    [&]() -> cb::task<>
+
+    [[maybe_unused]] auto task = [&]() -> cb::task<>
     {
         int n = lua_gettop(l);
         assert(n >= 3, "Usage: LaunchSubScript(scriptText, funcList, subList[, ...])");
@@ -415,7 +545,7 @@ int lua_state_t::launch_sub_script()
             lua_xmove(sub.l, main_state.l, 1);
             if (lua_pcall(main_state.l, 3, 0, 0))
             {
-                main_state.logLuaError();
+                main_state.log_lua_error();
             }
         }
         else
@@ -425,7 +555,7 @@ int lua_state_t::launch_sub_script()
             int extras = push_saved_values(main_state.l, pop_save_values(sub.l, 2));
             if (lua_pcall(main_state.l, extras + 2, 0, 0))
             {
-                main_state.logLuaError();
+                main_state.log_lua_error();
             }
         }
     }();
@@ -474,6 +604,26 @@ int lua_state_t::screen_size()
     lua_pushinteger(l, h);
     return 2;
 }
+
+int lua_state_t::is_key_down_callback()
+{
+    int n = lua_gettop(l);
+    assert(n >= 1, "Usage: IsKeyDown(keyName)");
+    assert(lua_isstring(l, 1), "IsKeyDown() argument 1: expected string, got %t", 1);
+    size_t len;
+    const char* kname = lua_tolstring(l, 1, &len);
+    assert(len >= 1, "IsKeyDown() argument 1: string is empty", 1);
+
+    // TODO: Convert kname to key and check if it is actually down
+    auto code = get_keycode(kname);
+    assert(code != SDLK_UNKNOWN, "IsKeyDown(): unrecognised key name");
+    auto kb_state = SDL_GetKeyboardState(nullptr);
+
+    bool is_down = kb_state[SDL_GetScancodeFromKey(code)];
+    lua_pushboolean(l, is_down);
+    return 1;
+}
+
 int lua_state_t::new_image_handle()
 {
     ImageHandle* imgHandle = (ImageHandle*)lua_newuserdata(l, sizeof(ImageHandle));
@@ -581,7 +731,7 @@ void lua_state_t::callParameterlessFunction(const char* name)
     // Call on frame
     if (lua_pcall(l, 1, 0, 0))
     {
-        logLuaError();
+        log_lua_error();
         lua_settop(l, 0);
         return;
     }
@@ -590,7 +740,7 @@ void lua_state_t::callParameterlessFunction(const char* name)
     lua_settop(l, 0);
 }
 
-void lua_state_t::logLuaError() { fprintf(stderr, "%d: %s\n", id, lua_tostring(l, -1)); }
+void lua_state_t::log_lua_error() { fprintf(stderr, "%d: %s\n", id, lua_tostring(l, -1)); }
 
 int lua_state_t::call_main_from_sub(bool sync)
 {
@@ -614,7 +764,7 @@ int lua_state_t::call_main_from_sub(bool sync)
 
         if (lua_pcall(main_l, pushed_count + 2, LUA_MULTRET, 0))
         {
-            state_t::instance->lua_state.logLuaError();
+            state_t::instance->lua_state.log_lua_error();
         }
 
         std::vector<lua_value> return_values;

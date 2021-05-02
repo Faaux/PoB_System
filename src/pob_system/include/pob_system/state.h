@@ -1,4 +1,5 @@
 #pragma once
+#include <SDL.h>
 #include <pob_system/image.h>
 #include <pob_system/lua_helper.h>
 #include <tasks/static_thread_pool.h>
@@ -33,6 +34,12 @@ class lua_state_t
     // Helpers to call into lua
     void onInit();
     void onFrame();
+    void onChar(char c);
+    void onKeyDown(SDL_Keycode key);
+    void onKeyUp(SDL_Keycode key);
+    void onMouseDown(int mb, bool double_click);
+    void onMouseUp(int mb);
+    bool canExit();
 
    private:
     // Constants
@@ -58,6 +65,7 @@ class lua_state_t
     int get_runtime_path();
     int make_dir();
     int screen_size();
+    int is_key_down_callback();
     int new_image_handle();
     int img_handle_gc(ImageHandle& handle);
     int img_handle_load(ImageHandle& handle);
@@ -71,7 +79,7 @@ class lua_state_t
     void pushMainObjectOntoStack();
     void pushCallableOntoStack(const char* name);
     void callParameterlessFunction(const char* name);
-    void logLuaError();
+    void log_lua_error();
 
     // SubScript Helpers
     int call_main_from_sub(bool sync);
@@ -107,8 +115,6 @@ class state_t
     render_state_t render_state;
     cb::static_thread_pool global_thread_pool{std::thread::hardware_concurrency() - 1};
     cb::static_thread_pool main_lua_thread{1};
-
-    
 
     static state_t* instance;
 };
