@@ -2,6 +2,7 @@
 #include <pob_system/keys.h>
 #include <pob_system/lua_helper.h>
 #include <pob_system/state.h>
+#include <pob_system/user_path_helper.h>
 
 #include <chrono>
 #include <filesystem>
@@ -11,6 +12,7 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
 {
     static int lua_id = 1;
     id = lua_id++;
+    user_path = get_user_home_directory();
 
     l = luaL_newstate();
 
@@ -56,9 +58,13 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
     LUA_GLOBAL_FUNCTION(LaunchSubScript, launch_sub_script);
     LUA_GLOBAL_FUNCTION(GetScriptPath, get_script_path);
     LUA_GLOBAL_FUNCTION(GetRuntimePath, get_runtime_path);
+    LUA_GLOBAL_FUNCTION(GetUserPath, get_user_path);
     LUA_GLOBAL_FUNCTION(MakeDir, make_dir);
     LUA_GLOBAL_FUNCTION(GetScreenSize, screen_size);
     LUA_GLOBAL_FUNCTION(IsKeyDown, is_key_down_callback);
+    LUA_GLOBAL_FUNCTION(GetCursorPos, cursor_pos);
+    LUA_GLOBAL_FUNCTION(Copy, copy);
+    LUA_GLOBAL_FUNCTION(Paste, paste);
 #undef LUA_GLOBAL_FUNCTION
 
     // -- Class Like
@@ -146,7 +152,7 @@ void lua_state_t::do_file(const char* file)
                  .join();
 }
 
-void lua_state_t::onInit()
+void lua_state_t::on_init()
 {
     // We do not run this on the lua main thread which is currently sleeping, because the window needs to be created on
     // the main thread. If it isnt we will not receive events from it!
@@ -154,7 +160,7 @@ void lua_state_t::onInit()
     callParameterlessFunction("OnInit");
 }
 
-void lua_state_t::onFrame()
+void lua_state_t::on_frame()
 {
     [&]() -> cb::task<>
     {
@@ -164,7 +170,7 @@ void lua_state_t::onFrame()
                  .join();
 }
 
-void lua_state_t::onChar(char c)
+void lua_state_t::on_char(char c)
 {
     [c]() -> cb::task<>
     {
@@ -180,7 +186,7 @@ void lua_state_t::onChar(char c)
     }()
                  .join();
 }
-void lua_state_t::onKeyDown(SDL_Keycode key)
+void lua_state_t::on_key_down(SDL_Keycode key)
 {
     [key]() -> cb::task<>
     {
@@ -207,7 +213,7 @@ void lua_state_t::onKeyDown(SDL_Keycode key)
     }()
                    .join();
 }
-void lua_state_t::onKeyUp(SDL_Keycode key)
+void lua_state_t::on_key_up(SDL_Keycode key)
 {
     [key]() -> cb::task<>
     {
@@ -233,7 +239,7 @@ void lua_state_t::onKeyUp(SDL_Keycode key)
                    .join();
 }
 
-void lua_state_t::onMouseDown(int mb, bool double_click)
+void lua_state_t::on_mouse_down(int mb, bool double_click)
 {
     [mb, double_click]() -> cb::task<>
     {
@@ -254,7 +260,7 @@ void lua_state_t::onMouseDown(int mb, bool double_click)
                                 .join();
 }
 
-void lua_state_t::onMouseUp(int mb)
+void lua_state_t::on_mouse_up(int mb)
 {
     [mb]() -> cb::task<>
     {
@@ -273,7 +279,21 @@ void lua_state_t::onMouseUp(int mb)
                   .join();
 }
 
-bool lua_state_t::canExit()
+void lua_state_t::on_exit()
+{
+    []() -> cb::task<>
+    {
+        co_await state_t::instance->main_lua_thread.schedule();
+        auto& main_state = state_t::instance->lua_state;
+        main_state.pushCallableOntoStack("OnExit");
+        if (lua_pcall(main_state.l, 1, 0, 0))
+        {
+            main_state.log_lua_error();
+        }
+    }()
+                .join();
+}
+bool lua_state_t::can_exit()
 {
     return []() -> cb::task<bool>
     {
@@ -575,6 +595,11 @@ int lua_state_t::get_runtime_path()
     lua_pushstring(l, std::filesystem::current_path().string().c_str());
     return 1;
 }
+int lua_state_t::get_user_path()
+{
+    lua_pushstring(l, user_path.c_str());
+    return 1;
+}
 int lua_state_t::make_dir()
 {
     int n = lua_gettop(l);
@@ -622,6 +647,37 @@ int lua_state_t::is_key_down_callback()
     bool is_down = kb_state[SDL_GetScancodeFromKey(code)];
     lua_pushboolean(l, is_down);
     return 1;
+}
+
+int lua_state_t::cursor_pos()
+{
+    assert(state, "Can only be called from the main thread");
+    int x, y;
+    SDL_GetMouseState(&x, &y);
+
+    lua_pushinteger(l, x);
+    lua_pushinteger(l, y);
+    return 2;
+}
+
+int lua_state_t::copy()
+{
+    int n = lua_gettop(l);
+    assert(n >= 1, "Usage: Copy(string)");
+    assert(lua_isstring(l, 1), "Copy() argument 1: expected string, got %t", 1);
+    SDL_SetClipboardText(lua_tostring(l, 1));
+    return 0;
+}
+
+int lua_state_t::paste()
+{
+    const char* clipboard = SDL_GetClipboardText();
+    if (clipboard)
+    {
+        lua_pushstring(l, clipboard);
+        return 1;
+    }
+    return 0;
 }
 
 int lua_state_t::new_image_handle()

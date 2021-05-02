@@ -32,14 +32,15 @@ class lua_state_t
     int get_id() const { return id; }
 
     // Helpers to call into lua
-    void onInit();
-    void onFrame();
-    void onChar(char c);
-    void onKeyDown(SDL_Keycode key);
-    void onKeyUp(SDL_Keycode key);
-    void onMouseDown(int mb, bool double_click);
-    void onMouseUp(int mb);
-    bool canExit();
+    void on_init();
+    void on_frame();
+    void on_char(char c);
+    void on_key_down(SDL_Keycode key);
+    void on_key_up(SDL_Keycode key);
+    void on_mouse_down(int mb, bool double_click);
+    void on_mouse_up(int mb);
+    void on_exit();
+    bool can_exit();
 
    private:
     // Constants
@@ -63,9 +64,15 @@ class lua_state_t
     int launch_sub_script();
     int get_script_path();
     int get_runtime_path();
+    int get_user_path();
     int make_dir();
     int screen_size();
     int is_key_down_callback();
+    int cursor_pos();
+    int copy();
+    int paste();
+
+    // Image Handling
     int new_image_handle();
     int img_handle_gc(ImageHandle& handle);
     int img_handle_load(ImageHandle& handle);
@@ -88,6 +95,7 @@ class lua_state_t
     state_t* state;
     lua_State* l;
     int main_object_index = -1;
+    std::string user_path;
 };
 
 struct render_state_t

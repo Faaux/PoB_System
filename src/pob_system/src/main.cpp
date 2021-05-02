@@ -9,8 +9,8 @@
 
 int main(int argc, char* argv[])
 {
-    std::filesystem::current_path("c:\\Projects\\\PathOfBuilding\\src");
-    // std::filesystem::current_path("c:\\Projects\\\PoB_System\\PoBData");
+    //std::filesystem::current_path("c:\\Projects\\PathOfBuilding\\src");
+     std::filesystem::current_path("c:\\Projects\\\PoB_System\\PoBData");
 
     SDL_Init(SDL_INIT_VIDEO);
 
@@ -25,7 +25,7 @@ int main(int argc, char* argv[])
     state_t::instance = &state;
 
     state.lua_state.do_file("Launch.lua");
-    state.lua_state.onInit();
+    state.lua_state.on_init();
 
     while (state.render_state.is_init)
     {
@@ -33,9 +33,10 @@ int main(int argc, char* argv[])
         SDL_Event event;
         if (SDL_WaitEvent(&event))
         {
-            if (event.type == SDL_QUIT && state.lua_state.canExit())
+            if (event.type == SDL_QUIT && state.lua_state.can_exit())
             {
                 // Break out of the loop on quit
+                state.lua_state.on_exit();
                 break;
             }
             else if (event.type == SDL_TEXTINPUT)
@@ -43,43 +44,43 @@ int main(int argc, char* argv[])
                 char* text = event.text.text;
                 while (*text)
                 {
-                    state.lua_state.onChar(*text);
+                    state.lua_state.on_char(*text);
                     text++;
                 }
             }
             else if (event.type == SDL_KEYDOWN)
             {
-                state.lua_state.onKeyDown(event.key.keysym.sym);
+                state.lua_state.on_key_down(event.key.keysym.sym);
             }
             else if (event.type == SDL_KEYUP)
             {
-                state.lua_state.onKeyUp(event.key.keysym.sym);
+                state.lua_state.on_key_up(event.key.keysym.sym);
             }
             else if (event.type == SDL_MOUSEBUTTONDOWN)
             {
                 bool double_click = event.button.clicks == 2;
-                state.lua_state.onMouseDown(event.button.button, double_click);
+                state.lua_state.on_mouse_down(event.button.button, double_click);
             }
             else if (event.type == SDL_MOUSEBUTTONUP)
             {
-                state.lua_state.onMouseUp(event.button.button);
+                state.lua_state.on_mouse_up(event.button.button);
             }
             else if (event.type == SDL_MOUSEWHEEL)
             {
                 if (event.wheel.y > 0)
                 {
-                    state.lua_state.onMouseDown(SDL_BUTTON_WHEELUP, false);
-                    state.lua_state.onMouseUp(SDL_BUTTON_WHEELUP);
+                    state.lua_state.on_mouse_down(SDL_BUTTON_WHEELUP, false);
+                    state.lua_state.on_mouse_up(SDL_BUTTON_WHEELUP);
                 }
                 else if (event.wheel.y < 0)  // scroll down
                 {
-                    state.lua_state.onMouseDown(SDL_BUTTON_WHEELDOWN, false);
-                    state.lua_state.onMouseUp(SDL_BUTTON_WHEELDOWN);
+                    state.lua_state.on_mouse_down(SDL_BUTTON_WHEELDOWN, false);
+                    state.lua_state.on_mouse_up(SDL_BUTTON_WHEELDOWN);
                 }
             }
         }
 
-        // state.lua_state.onFrame();
+        state.lua_state.on_frame();
 
         // Randomly change the colour
         Uint8 red = rand() % 255;

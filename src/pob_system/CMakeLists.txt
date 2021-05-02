@@ -8,7 +8,7 @@ add_executable(pob_system
 	"src/lua_helper.cpp"
 
 	"include/pob_system/state.h"
-	"src/state.cpp" "include/pob_system/image.h" "src/image.cpp"  "include/pob_system/keys.h" "src/keys.cpp")
+	"src/state.cpp" "include/pob_system/image.h" "src/image.cpp"  "include/pob_system/keys.h" "src/keys.cpp"  "include/pob_system/user_path_helper.h" "src/win32.cpp")
 
 SET_PROJECT_WARNINGS(pob_system)
 target_link_libraries(pob_system PRIVATE tasks SDL2::SDL2-static SDL2::SDL2_image LuaJIT::LuaJIT)
