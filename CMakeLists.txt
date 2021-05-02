@@ -3,6 +3,7 @@
 project ("PoBSystem")
 
 include(cmake/CompilerWarnings.cmake)
+include(cmake/ClangFormat.cmake)
 
 
 set(CMAKE_CXX_STANDARD 20)

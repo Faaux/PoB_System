@@ -27,3 +27,4 @@ add_library (tasks STATIC
 
 SET_PROJECT_WARNINGS(tasks)
 target_include_directories(tasks PUBLIC include)
+format_pre_built(tasks)

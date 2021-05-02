@@ -74,8 +74,8 @@ std::vector< lua_value > pop_save_values( lua_State* l, int start )
 	for ( int i = start; i <= n; i++ ) {
 		state->assert(
 			lua_isnil( l, i ) || lua_isboolean( l, i ) || lua_isnumber( l, i ) || lua_isstring( l, i ),
-				"argument %d: only nil, boolean, number and string can be passed to the main script",
-				i );
+			"argument %d: only nil, boolean, number and string can be passed to the main script",
+			i );
 	}
 
 	std::vector< lua_value > values;
