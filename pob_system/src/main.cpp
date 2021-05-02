@@ -10,6 +10,7 @@
 
 int main(int argc, char* argv[])
 {
+    printf("%s", std::filesystem::current_path().string().c_str());
     std::filesystem::current_path("c:\\Projects\\PoB_System\\PoBData");
 
     SDL_Init(SDL_INIT_VIDEO);
@@ -21,9 +22,7 @@ int main(int argc, char* argv[])
     }
 
     // Lives till application close
-    state_t state;
-    state.argc = argc;
-    state.argv = argv;
+    state_t state(argc, argv);
     state_t::instance = &state;
 
     state.lua_state.do_file("Launch.lua");
@@ -42,7 +41,6 @@ int main(int argc, char* argv[])
             }
         }
 
-        state.lua_state.checkSubPrograms();
         state.lua_state.onFrame();
 
         // Randomly change the colour

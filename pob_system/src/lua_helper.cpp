@@ -110,7 +110,7 @@ std::vector<lua_value> pop_save_values(lua_State* l, int start)
     return values;
 }
 
-void push_saved_values(lua_State* l, const std::vector<lua_value>& values)
+int push_saved_values(lua_State* l, const std::vector<lua_value>& values)
 {
     for (auto& value : values)
     {
@@ -142,4 +142,6 @@ void push_saved_values(lua_State* l, const std::vector<lua_value>& values)
             }
         }
     }
+
+    return static_cast<int>(values.size());
 }

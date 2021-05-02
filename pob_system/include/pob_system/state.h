@@ -79,7 +79,6 @@ class lua_state_t
     int id;
     state_t* state;
     lua_State* l;
-    std::vector<cb::task<std::shared_ptr<lua_state_t>, true> > sub_programs;
     int main_object_index = -1;
 };
 
@@ -100,14 +99,16 @@ struct render_state_t
 class state_t
 {
    public:
+    state_t(int argc, char* argv[]) : argc(argc), argv(argv), lua_state(this) {}
+    int argc;
+    char** argv;
     // No getters and setters, know what you change
-    lua_state_t lua_state{this};
+    lua_state_t lua_state;
     render_state_t render_state;
     cb::static_thread_pool global_thread_pool{std::thread::hardware_concurrency() - 1};
     cb::static_thread_pool main_lua_thread{1};
 
-    int argc;
-    char** argv;
+    
 
     static state_t* instance;
 };

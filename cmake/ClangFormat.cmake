@@ -32,7 +32,13 @@ function(format_pre_built target)
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
             COMMENT "Formatting ${target_name}"
         )
-        add_dependencies(${target} "${target_name}_format")
+
+        if(TARGET format_all)
+            add_dependencies(format_all "${target_name}_format")
+        else()
+            add_custom_target(format_all DEPENDS "${target_name}_format")
+        endif()
+
 
     endif()
 endfunction()

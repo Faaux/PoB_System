@@ -144,35 +144,12 @@ void lua_state_t::do_file(const char* file)
                  .join();
 }
 
-void lua_state_t::checkSubPrograms()
-{
-    auto subs = std::move(sub_programs);
-    for (auto&& task : subs)
-    {
-        if (task.await_ready())
-        {
-            auto sub_state = task.join();
-            auto sub_id = sub_state->get_id();
-            // ToDo Finish SubScript here
-        }
-        else
-        {
-            // Task not yet ready, push to running sub programs
-            sub_programs.push_back(std::move(task));
-        }
-    }
-}
-
 void lua_state_t::onInit()
 {
-    // Run this on the main lua thread and wait for it to finish
-    // We do this because sub-scripts can also schedule on this thread to e.g update the ui
-    [&]() -> cb::task<>
-    {
-        co_await state->main_lua_thread.schedule();
-        callParameterlessFunction("OnInit");
-    }()
-                 .join();
+    // We do not run this on the lua main thread which is currently sleeping, because the window needs to be created on
+    // the main thread. If it isnt we will not receive events from it!
+
+    callParameterlessFunction("OnInit");
 }
 
 void lua_state_t::onFrame()
@@ -364,75 +341,93 @@ int lua_state_t::p_call()
 int lua_state_t::launch_sub_script()
 {
     int sub_id = -1;
-    sub_programs.emplace_back(
-        [&]() -> cb::task<std::shared_ptr<lua_state_t>, true>
+    [&]() -> cb::task<>
+    {
+        int n = lua_gettop(l);
+        assert(n >= 3, "Usage: LaunchSubScript(scriptText, funcList, subList[, ...])");
+        for (int i = 1; i <= 3; i++)
         {
-            int n = lua_gettop(l);
-            assert(n >= 3, "Usage: LaunchSubScript(scriptText, funcList, subList[, ...])");
-            for (int i = 1; i <= 3; i++)
+            assert(lua_isstring(l, i), "LaunchSubScript() argument %d: expected string, got %t", i, i);
+        }
+        for (int i = 4; i <= n; i++)
+        {
+            assert(lua_isnil(l, i) || lua_isboolean(l, i) || lua_isnumber(l, i) || lua_isstring(l, i),
+                   "LaunchSubScript() argument %d: only nil, boolean, number and string types can be passed to sub "
+                   "script",
+                   i);
+        }
+
+        lua_state_t sub(nullptr);
+        sub_id = sub.get_id();
+
+        int argsCount = n - 3;
+
+        const char* script = lua_tostring(l, 1);
+        luaL_loadstring(sub.l, script);
+        lua_xmove(l, sub.l, argsCount);
+
+        // Use string here to copy the value since it can be GCed otherwise.
+        std::string sync_override_calls = lua_tostring(l, 2);   // Sync call to main with return
+        std::string async_override_calls = lua_tostring(l, 3);  // Async call to main
+
+        // Put us on another thread, do not use any captured reference beyond this point
+        co_await state->global_thread_pool.schedule();
+
+        // Override global functions that should be called on the main thread
+        {
+            std::string token;
+            std::istringstream tokenStream(sync_override_calls);
+            while (std::getline(tokenStream, token, ','))
             {
-                assert(lua_isstring(l, i), "LaunchSubScript() argument %d: expected string, got %t", i, i);
+                lua_pushstring(sub.l, token.c_str());
+                lua_pushcclosure(
+                    sub.l, [](lua_State* local) -> int { return get_current_state(local)->call_main_from_sub(true); },
+                    1);
+                lua_setglobal(sub.l, token.c_str());
             }
-            for (int i = 4; i <= n; i++)
+        }
+
+        {
+            std::string token;
+            std::istringstream tokenStream(async_override_calls);
+            while (std::getline(tokenStream, token, ','))
             {
-                assert(lua_isnil(l, i) || lua_isboolean(l, i) || lua_isnumber(l, i) || lua_isstring(l, i),
-                       "LaunchSubScript() argument %d: only nil, boolean, number and string types can be passed to sub "
-                       "script",
-                       i);
+                lua_pushstring(sub.l, token.c_str());
+                lua_pushcclosure(
+                    sub.l, [](lua_State* local) -> int { return get_current_state(local)->call_main_from_sub(false); },
+                    1);
+                lua_setglobal(sub.l, token.c_str());
             }
+        }
 
-            auto sub_state = std::make_shared<lua_state_t>(nullptr);
-            sub_id = sub_state->get_id();
-            auto& sub = *sub_state;
+        // On the other thread start the lua script
+        int has_error = lua_pcall(sub.l, argsCount, LUA_MULTRET, 0);
 
-            int argsCount = n - 3;
+        // Move back to main lua_thread for OnSubFinished and OnSubError
+        co_await state_t::instance->main_lua_thread.schedule();
+        auto& main_state = state_t::instance->lua_state;
 
-            const char* script = lua_tostring(l, 1);
-            luaL_loadstring(sub.l, script);
-            lua_xmove(l, sub.l, argsCount);
-
-            // Use string here to copy the value since it can be GCed otherwise.
-            std::string sync_override_calls = lua_tostring(l, 2);   // Sync call to main with return
-            std::string async_override_calls = lua_tostring(l, 3);  // Async call to main
-
-            // Put us on another thread, do not use any captured reference beyond this point
-            co_await state->global_thread_pool.schedule();
-
-            // Override global functions that should be called on the main thread
+        if (has_error)
+        {
+            main_state.pushCallableOntoStack("OnSubError");
+            lua_pushinteger(main_state.l, sub.get_id());
+            lua_xmove(sub.l, main_state.l, 1);
+            if (lua_pcall(main_state.l, 3, 0, 0))
             {
-                std::string token;
-                std::istringstream tokenStream(sync_override_calls);
-                while (std::getline(tokenStream, token, ','))
-                {
-                    lua_pushstring(sub.l, token.c_str());
-                    lua_pushcclosure(
-                        sub.l,
-                        [](lua_State* local) -> int { return get_current_state(local)->call_main_from_sub(true); }, 1);
-                    lua_setglobal(sub.l, token.c_str());
-                }
+                main_state.logLuaError();
             }
-
+        }
+        else
+        {
+            main_state.pushCallableOntoStack("OnSubFinished");
+            lua_pushinteger(main_state.l, sub.get_id());
+            int extras = push_saved_values(main_state.l, pop_save_values(sub.l, 2));
+            if (lua_pcall(main_state.l, extras + 2, 0, 0))
             {
-                std::string token;
-                std::istringstream tokenStream(async_override_calls);
-                while (std::getline(tokenStream, token, ','))
-                {
-                    lua_pushstring(sub.l, token.c_str());
-                    lua_pushcclosure(
-                        sub.l,
-                        [](lua_State* local) -> int { return get_current_state(local)->call_main_from_sub(false); }, 1);
-                    lua_setglobal(sub.l, token.c_str());
-                }
+                main_state.logLuaError();
             }
-
-            // On the other thread start the lua script
-            if (lua_pcall(sub.l, argsCount, LUA_MULTRET, 0))
-            {
-                sub.logLuaError();
-            }
-
-            co_return sub_state;
-        }());
+        }
+    }();
 
     lua_pushinteger(l, sub_id);
 
@@ -614,9 +609,9 @@ int lua_state_t::call_main_from_sub(bool sync)
         state_t::instance->lua_state.pushCallableOntoStack("OnSubCall");
         lua_pushstring(main_l, funcName.c_str());
 
-        push_saved_values(main_l, values);
+        int pushed_count = push_saved_values(main_l, values);
 
-        if (lua_pcall(main_l, static_cast<int>(values.size() + 2), LUA_MULTRET, 0))
+        if (lua_pcall(main_l, pushed_count + 2, LUA_MULTRET, 0))
         {
             state_t::instance->lua_state.logLuaError();
         }
@@ -643,8 +638,7 @@ int lua_state_t::call_main_from_sub(bool sync)
     if (sync)
     {
         auto return_values = task.join();
-        push_saved_values(l, return_values);
-        return static_cast<int>(return_values.size());
+        return push_saved_values(l, return_values);
     }
 
     return 0;
