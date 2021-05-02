@@ -68,7 +68,7 @@ target_link_libraries(lcurl PRIVATE CURL::libcurl LuaJIT::LuaJIT)
 install(TARGETS lcurl)
 
 # Include sub-projects.
-add_subdirectory ("LZip")
-add_subdirectory ("tasks")
-add_subdirectory ("pob_system")
-add_subdirectory ("tests")
+add_subdirectory ("src/LZip")
+add_subdirectory ("src/tasks")
+add_subdirectory ("src/pob_system")
+add_subdirectory ("src/tests")

@@ -10,8 +10,8 @@
 
 int main(int argc, char* argv[])
 {
-    printf("%s", std::filesystem::current_path().string().c_str());
-    std::filesystem::current_path("c:\\Projects\\PoB_System\\PoBData");
+    // std::filesystem::current_path("c:\\Projects\\\PathOfBuilding\\src");
+    std::filesystem::current_path("c:\\Projects\\\PoB_System\\PoBData");
 
     SDL_Init(SDL_INIT_VIDEO);
 

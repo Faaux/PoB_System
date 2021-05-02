@@ -109,6 +109,7 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
     STUB("DrawImage");
     STUB("DrawStringWidth");
     STUB("ConExecute");
+    STUB("IsKeyDown");
 
 #undef STUB
 
