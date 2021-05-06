@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include <pob_system/draw_layer.h>
+
 // Forward Declare
 struct lua_State;
 struct SDL_Window;
@@ -53,6 +55,7 @@ class lua_state_t
     ImageHandle& get_image_handle(int index) const;
 
     // Callbacks
+    int set_draw_layer();
     int set_window_title();
     int set_main_object();
     int get_time();
@@ -94,6 +97,7 @@ class lua_state_t
     int id;
     state_t* state;
     lua_State* l;
+    draw_layer_t draw_layer
     int main_object_index = -1;
     std::string user_path;
 };

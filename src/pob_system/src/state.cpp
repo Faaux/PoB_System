@@ -139,6 +139,36 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
 
 lua_state_t::~lua_state_t() { lua_close(l); }
 
+
+int lua_state_t::set_draw_layer()
+{
+    int n = lua_gettop(l);
+
+    assert(n >= 1, "Usage: SetDrawLayer({layer|nil}[, subLayer])");
+    assert(lua_isnumber(l, 1) || lua_isnil(l, 1), "SetDrawLayer() argument 1: expected number or nil, got %t", 1);
+
+    if (n >= 2)
+    {
+        assert(n >= 2, "SetDrawLayer() argument 2: expected number, got %t", 2);
+    }
+
+    if (lua_isnil(l, 1))
+    {
+        assert(n >= 2, "SetDrawLAyer(): mus provide subLayer if layer is nil");
+        draw_layer.SetSubLayer(lua_tointeger(l, 2));
+    }
+    else if (n >= 2)
+    {
+        draw_layer.SetLayer(lua_tointeger(l, 1), lua_tointeger(l, 2));
+    }
+    else
+    {
+        draw_layer.SetMainLayer(lua_tointeger(l, 1));
+    }
+
+    return 0;
+}
+
 void lua_state_t::do_file(const char* file)
 {
     [&]() -> cb::task<>
