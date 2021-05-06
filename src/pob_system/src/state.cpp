@@ -69,6 +69,7 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
 
 
     LUA_GLOBAL_FUNCTION(SetDrawLayer, set_draw_layer);
+    LUA_GLOBAL_FUNCTION(SetViewport, set_viewport);
 #undef LUA_GLOBAL_FUNCTION
 
     // -- Class Like
@@ -115,7 +116,6 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
                       });                   \
     lua_setglobal(l, n);
 
-    STUB("SetViewport");
     STUB("SetDrawColor");
     STUB("DrawImage");
     STUB("DrawStringWidth");
