@@ -3,6 +3,7 @@
 #include <pob_system/lua_helper.h>
 #include <pob_system/state.h>
 #include <pob_system/user_path_helper.h>
+#include <pob_system/commands/viewport_command.h>
 
 #include <chrono>
 #include <filesystem>
@@ -140,6 +141,7 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
 
 lua_state_t::~lua_state_t() { lua_close(l); }
 
+void lua_state_t::append_cmd(viewport_command_t command) { printf("Func not imlemented"); }
 
 int lua_state_t::set_draw_layer()
 {
@@ -167,6 +169,31 @@ int lua_state_t::set_draw_layer()
         draw_layer.SetMainLayer(lua_tointeger(l, 1));
     }
 
+    return 0;
+}
+
+int lua_state_t::set_viewport() 
+{
+    int n = lua_gettop(l);
+    if (n)
+    {
+        assert(n >= 4, "Usage: SetViewport([x, y, width, height])");
+        for (int i = 1; i <= 4; i++)
+        {
+            assert(lua_isnumber(l, i), "SetViewport() argument %d: expected number, got %t", i, i);
+        }
+
+        append_cmd(viewport_command_t{(int)lua_tointeger(l, 1), (int)lua_tointeger(l, 2), (int)lua_tointeger(l, 3),
+                                     (int)lua_tointeger(l, 4)});
+    }
+    else
+    {
+        int* width;
+        int* height;
+        SDL_GetWindowSize(state->render_state.window, width, height);
+
+        append_cmd(viewport_command_t{0, 0, *width, *height});
+    }
     return 0;
 }
 
