@@ -97,7 +97,7 @@ class lua_state_t
     int id;
     state_t* state;
     lua_State* l;
-    draw_layer_t draw_layer
+    draw_layer_t draw_layer;
     int main_object_index = -1;
     std::string user_path;
 };

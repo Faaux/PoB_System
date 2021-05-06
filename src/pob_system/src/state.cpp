@@ -65,6 +65,9 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
     LUA_GLOBAL_FUNCTION(GetCursorPos, cursor_pos);
     LUA_GLOBAL_FUNCTION(Copy, copy);
     LUA_GLOBAL_FUNCTION(Paste, paste);
+
+
+    LUA_GLOBAL_FUNCTION(SetDrawLayer, set_draw_layer);
 #undef LUA_GLOBAL_FUNCTION
 
     // -- Class Like
@@ -111,13 +114,11 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
                       });                   \
     lua_setglobal(l, n);
 
-    STUB("SetDrawLayer");
     STUB("SetViewport");
     STUB("SetDrawColor");
     STUB("DrawImage");
     STUB("DrawStringWidth");
     STUB("ConExecute");
-
 #undef STUB
 
     // Push args
