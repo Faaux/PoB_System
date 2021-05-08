@@ -158,15 +158,15 @@ int lua_state_t::set_draw_layer()
     if (lua_isnil(l, 1))
     {
         assert(n >= 2, "SetDrawLAyer(): mus provide subLayer if layer is nil");
-        draw_layer.SetSubLayer(lua_tointeger(l, 2));
+        draw_layer.set_sub_layer(lua_tointeger(l, 2));
     }
     else if (n >= 2)
     {
-        draw_layer.SetLayer(lua_tointeger(l, 1), lua_tointeger(l, 2));
+        draw_layer.set_layer(lua_tointeger(l, 1), lua_tointeger(l, 2));
     }
     else
     {
-        draw_layer.SetMainLayer(lua_tointeger(l, 1));
+        draw_layer.set_main_layer(lua_tointeger(l, 1));
     }
 
     return 0;
