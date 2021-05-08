@@ -188,7 +188,8 @@ int lua_state_t::set_viewport()
     }
     else
     {
-        int width, height = -1;
+        int width = -1;
+        int height = -1;
 
         SDL_GetWindowSize(state->render_state.window, &width, &height);
 
