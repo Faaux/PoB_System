@@ -1,4 +1,5 @@
 #include <SDL.h>
+#include <SDL2/SDL_ttf.h>
 #include <SDL_image.h>
 #include <pob_system/keys.h>
 #include <pob_system/lua_helper.h>
@@ -16,6 +17,11 @@ int main(int argc, char* argv[])
 
     int flags = IMG_INIT_JPG | IMG_INIT_PNG;
     if ((flags & IMG_Init(flags)) != flags)
+    {
+        return -1;
+    }
+
+    if (TTF_Init() != 0)
     {
         return -1;
     }
@@ -92,6 +98,7 @@ int main(int argc, char* argv[])
         SDL_RenderPresent(state.render_state.renderer);
     }
 
+    TTF_Quit();
     IMG_Quit();
     SDL_Quit();
     return 0;
