@@ -4,10 +4,13 @@
 #include <pob_system/lua_helper.h>
 #include <tasks/static_thread_pool.h>
 #include <tasks/task.h>
+#include <pob_system/commands/viewport_command.h>
 
 #include <cstdint>
 #include <string>
 #include <vector>
+
+#include <pob_system/draw_layer.h>
 
 // Forward Declare
 struct lua_State;
@@ -72,6 +75,9 @@ class lua_state_t
     int copy();
     int paste();
 
+    int set_draw_layer();
+    int set_viewport();
+
     // Image Handling
     int new_image_handle();
     int img_handle_gc(ImageHandle& handle);
@@ -94,8 +100,11 @@ class lua_state_t
     int id;
     state_t* state;
     lua_State* l;
+    draw_layer_t draw_layer;
     int main_object_index = -1;
     std::string user_path;
+
+    void append_cmd(viewport_command_t);
 };
 
 struct render_state_t
