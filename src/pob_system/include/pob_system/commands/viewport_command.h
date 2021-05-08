@@ -8,7 +8,8 @@ struct viewport_command_t
     int width;
     int height;
 
-    void execute() {
-        //TODO
+    void execute()
+    {
+        // TODO
     }
-}
+};
