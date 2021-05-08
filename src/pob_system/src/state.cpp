@@ -188,11 +188,11 @@ int lua_state_t::set_viewport()
     }
     else
     {
-        int* width;
-        int* height;
-        SDL_GetWindowSize(state->render_state.window, width, height);
+        int width, height = -1;
 
-        append_cmd(viewport_command_t{0, 0, *width, *height});
+        SDL_GetWindowSize(state->render_state.window, &width, &height);
+
+        append_cmd(viewport_command_t{0, 0, width, height});
     }
     return 0;
 }
