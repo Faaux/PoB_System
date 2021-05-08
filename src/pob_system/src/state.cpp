@@ -152,7 +152,7 @@ int lua_state_t::set_draw_layer()
 
     if (n >= 2)
     {
-        assert(n >= 2, "SetDrawLayer() argument 2: expected number, got %t", 2);
+        assert(lua_isnumber(l, 2), "SetDrawLayer() argument 2: expected number, got %t", 2);
     }
 
     if (lua_isnil(l, 1))
