@@ -35,7 +35,7 @@ void Image::wait_for_load() const
         return;
 
     // Wait synchronously
-    image_load_task_.join();
+    cb::sync_wait(image_load_task_);
 }
 
 cb::task<> Image::load_image()
