@@ -2,13 +2,15 @@
 #include <coroutine>
 #include <iostream>
 #include <semaphore>
+#include <tasks/detail/lightweight_manual_reset_event.hpp>
+#include <tasks/detail/sync_wait_task.hpp>
 #include <thread>
 
 namespace cb
 {
 namespace detail
 {
-template <typename P, bool Joinable>
+template <typename P>
 struct final_awaitable
 {
     bool await_ready() const noexcept { return false; }
@@ -25,17 +27,6 @@ struct final_awaitable
     }
 };
 
-template <typename P>
-struct final_awaitable<P, true>
-{
-    bool await_ready() const noexcept { return false; }
-
-    void await_resume() const noexcept {}
-
-    void await_suspend(std::coroutine_handle<P> h) const noexcept { h.promise().sem.release(); }
-};
-
-template <bool Joinable>
 struct promise_base
 {
     std::suspend_never initial_suspend() { return {}; }
@@ -46,47 +37,59 @@ struct promise_base
     std::atomic<bool> hasContinuation = false;
 };
 
-template <>
-struct promise_base<true> : public promise_base<false>
-{
-    std::binary_semaphore sem{0};
-};
-
-template <typename Task, typename T, bool Joinable>
-struct promise : promise_base<Joinable>
+template <typename Task, typename T>
+struct promise : promise_base
 {
     Task get_return_object() { return std::coroutine_handle<promise>::from_promise(*this); }
 
-    final_awaitable<promise, Joinable> final_suspend() noexcept { return {}; }
+    final_awaitable<promise> final_suspend() noexcept { return {}; }
 
-    void return_value(T const& value) noexcept(std::is_nothrow_copy_assignable_v<T>) { data = value; }
+    void return_value(T const& value) noexcept(std::is_nothrow_copy_assignable_v<T>)
+    {
+        data = value;
+        printf("");
+    }
 
-    void return_value(T&& value) noexcept(std::is_nothrow_move_assignable_v<T>) { data = std::move(value); }
+    void return_value(T&& value) noexcept(std::is_nothrow_move_assignable_v<T>)
+    {
+        data = std::move(value);
+        printf("");
+    }
 
-    T& result() & { return data; }
+    T& result() &
+    {
+        printf("");
+        return data;
+    }
 
-    T&& result() && { return std::move(data); }
+    T&& result() &&
+    {
+        printf("");
+        return std::move(data);
+    }
 
    private:
     T data;
 };
 
-template <typename Task, bool Joinable>
-struct promise<Task, void, Joinable> : promise_base<Joinable>
+template <typename Task>
+struct promise<Task, void> : promise_base
 {
     Task get_return_object() { return std::coroutine_handle<promise>::from_promise(*this); }
 
-    final_awaitable<promise, Joinable> final_suspend() noexcept { return {}; }
+    final_awaitable<promise> final_suspend() noexcept { return {}; }
 
     void return_void() {}
+
+    void result() {}
 };
 
-template <typename Task, typename T, bool Joinable>
-struct promise<Task, T&, Joinable> : promise_base<Joinable>
+template <typename Task, typename T>
+struct promise<Task, T&> : promise_base
 {
     Task get_return_object() { return std::coroutine_handle<promise>::from_promise(*this); }
 
-    final_awaitable<promise, Joinable> final_suspend() noexcept { return {}; }
+    final_awaitable<promise> final_suspend() noexcept { return {}; }
 
     void return_value(T& value) noexcept(std::is_nothrow_move_assignable_v<T>) { data = std::addressof(value); }
 
@@ -98,12 +101,35 @@ struct promise<Task, T&, Joinable> : promise_base<Joinable>
 
 }  // namespace detail
 
-template <typename T = void, bool Joinable = false>
+template <typename T = void>
 class [[nodiscard]] task
 {
    public:
-    using promise_type = detail::promise<task, T, Joinable>;
+    using promise_type = detail::promise<task, T>;
 
+   private:
+    struct awaitable_base
+    {
+        std::coroutine_handle<promise_type> coroutine_;
+
+        awaitable_base(std::coroutine_handle<promise_type> coroutine) noexcept : coroutine_(coroutine) {}
+
+        bool await_ready() const noexcept { return !coroutine_ || coroutine_.done(); }
+
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> awaitingCoroutine) noexcept
+        {
+            auto& basePromise = coroutine_.promise();
+            basePromise.continuation = awaitingCoroutine;
+            if (basePromise.hasContinuation.exchange(true, std::memory_order_release))
+            {
+                return awaitingCoroutine;
+            }
+
+            return std::noop_coroutine();
+        }
+    };
+
+   public:
     task() noexcept = default;
     task(std::coroutine_handle<promise_type> coroutine) noexcept : coroutine_{coroutine} {}
 
@@ -127,62 +153,68 @@ class [[nodiscard]] task
         return *this;
     }
 
-    [[nodiscard]] bool await_ready() const noexcept { return !coroutine_ || coroutine_.done(); }
-
-    std::coroutine_handle<> await_suspend(std::coroutine_handle<> continuation) const noexcept
+    ~task()
     {
-        if constexpr (Joinable)
+        if (coroutine_)
         {
-            // This should never happen because joinable tasks are not continuable. Use .join() instead.
-            __debugbreak();
-            std::terminate();
+            coroutine_.destroy();
         }
-        else
+    }
+
+    auto operator co_await() const& noexcept
+    {
+        struct awaitable : awaitable_base
         {
-            auto& basePromise = coroutine_.promise();
-            basePromise.continuation = continuation;
-            if (basePromise.hasContinuation.exchange(true, std::memory_order_release))
+            using awaitable_base::awaitable_base;
+
+            decltype(auto) await_resume()
             {
-                return continuation;
+                if (!this->coroutine_)
+                {
+                    assert(false);
+                }
+
+                return this->coroutine_.promise().result();
             }
-        }
-        return std::noop_coroutine();
+        };
+
+        return awaitable{coroutine_};
     }
 
-    decltype(auto) await_resume() const noexcept
+    auto operator co_await() const&& noexcept
     {
-        if constexpr (std::is_same_v<T, void>)
+        struct awaitable : awaitable_base
         {
-            return;
-        }
-        else
-        {
-            return std::move(coroutine_.promise()).result();
-        }
+            using awaitable_base::awaitable_base;
+
+            decltype(auto) await_resume()
+            {
+                if (!this->coroutine_)
+                {
+                    assert(false);
+                }
+
+                return std::move(this->coroutine_.promise()).result();
+            }
+        };
+
+        return awaitable{coroutine_};
     }
 
-    // If the Task is Joinable waits for the semaphore to be set
-    // Otherwise starts a new Joinable coroutine and sets it as the continuation of this coroutine
-    // Once the newly created Joinable coroutine is resumed its semaphore will be set. The calling thread will
-    // wait for that semaphore.
-    decltype(auto) join() const noexcept
-    {
-        if constexpr (Joinable)
-        {
-            coroutine_.promise().sem.acquire();
-            return await_resume();
-        }
-        else
-        {
-            // Not joinable, create a new joinable task that co_awaits this coroutine
-            // The newly created coroutine will be joinable via the semaphore
-            auto joinableTask = [this]() -> task<T, true> { co_return co_await *this; }();
-            return joinableTask.join();
-        }
-    }
+    [[nodiscard]] bool await_ready() const noexcept { return !coroutine_ || coroutine_.done(); }
 
    protected:
     std::coroutine_handle<promise_type> coroutine_ = nullptr;
 };
+
+template <typename AWAITABLE>
+auto sync_wait(AWAITABLE&& awaitable) -> typename cppcoro::awaitable_traits<AWAITABLE&&>::await_result_t
+{
+    auto t = cppcoro::detail::make_sync_wait_task(std::forward<AWAITABLE>(awaitable));
+    cppcoro::detail::lightweight_manual_reset_event event;
+    t.start(event);
+    event.wait();
+    return t.result();
+}
 
 }  // namespace cb
