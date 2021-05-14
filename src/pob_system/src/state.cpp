@@ -141,8 +141,6 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
 
 lua_state_t::~lua_state_t() { lua_close(l); }
 
-void lua_state_t::append_cmd(viewport_command_t command) { printf("Func not imlemented"); }
-
 int lua_state_t::set_draw_layer()
 {
     int n = lua_gettop(l);
@@ -174,7 +172,11 @@ int lua_state_t::set_draw_layer()
 
 int lua_state_t::set_viewport() 
 {
-    int n = lua_gettop(l);
+    const int n = lua_gettop(l);
+
+    //necessary to init though?
+    viewport_command_t cmd{};
+
     if (n)
     {
         assert(n >= 4, "Usage: SetViewport([x, y, width, height])");
@@ -183,8 +185,7 @@ int lua_state_t::set_viewport()
             assert(lua_isnumber(l, i), "SetViewport() argument %d: expected number, got %t", i, i);
         }
 
-        append_cmd(viewport_command_t{(int)lua_tointeger(l, 1), (int)lua_tointeger(l, 2), (int)lua_tointeger(l, 3),
-                                     (int)lua_tointeger(l, 4)});
+        cmd = viewport_command_t{(int)lua_tointeger(l, 1), (int)lua_tointeger(l, 2), (int)lua_tointeger(l, 3), (int)lua_tointeger(l, 4)};
     }
     else
     {
@@ -193,8 +194,12 @@ int lua_state_t::set_viewport()
 
         SDL_GetWindowSize(state->render_state.window, &width, &height);
 
-        append_cmd(viewport_command_t{0, 0, width, height});
+
+        cmd = viewport_command_t{0, 0, width, height};
     }
+
+    command_list_t->add(&cmd);
+
     return 0;
 }
 
