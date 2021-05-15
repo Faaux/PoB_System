@@ -2,6 +2,8 @@
 
 project ("PoBSystem")
 
+enable_testing()
+
 include(cmake/CompilerWarnings.cmake)
 include(cmake/ClangFormat.cmake)
 
