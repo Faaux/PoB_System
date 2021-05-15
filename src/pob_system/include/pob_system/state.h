@@ -79,6 +79,7 @@ class lua_state_t
 
     int set_draw_layer();
     int set_viewport();
+    int set_draw_color();
 
     // Image Handling
     int new_image_handle();

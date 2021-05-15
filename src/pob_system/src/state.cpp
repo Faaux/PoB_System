@@ -68,8 +68,9 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
     LUA_GLOBAL_FUNCTION(Paste, paste);
 
 
-    LUA_GLOBAL_FUNCTION(SetDrawLayer, set_draw_layer);
-    LUA_GLOBAL_FUNCTION(SetViewport, set_viewport);
+    LUA_GLOBAL_FUNCTION(SetDrawLayer, set_draw_layer)
+    LUA_GLOBAL_FUNCTION(SetViewport, set_viewport)
+    LUA_GLOBAL_FUNCTION(SetDrawColor, set_draw_color)
 #undef LUA_GLOBAL_FUNCTION
 
     // -- Class Like
@@ -116,7 +117,6 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
                       });                   \
     lua_setglobal(l, n);
 
-    STUB("SetDrawColor");
     STUB("DrawImage");
     STUB("DrawStringWidth");
     STUB("ConExecute");
@@ -203,6 +203,12 @@ int lua_state_t::set_viewport()
 
     return 0;
 }
+
+int lua_state_t::set_draw_color()
+{
+    //TODO
+}
+
 
 void lua_state_t::do_file(const char* file)
 {
