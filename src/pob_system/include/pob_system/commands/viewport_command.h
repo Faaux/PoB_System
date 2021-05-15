@@ -8,8 +8,12 @@ struct viewport_command_t
     int width;
     int height;
 
+    SDL_Renderer* renderer;
+
     void execute()
     {
-        // TODO
+        //Build and set viewport
+        SDL_Rect viewport{x, y, width, height};
+        SDL_RenderSetViewport(renderer, &viewport);
     }
 };

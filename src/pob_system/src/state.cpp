@@ -176,6 +176,7 @@ int lua_state_t::set_viewport()
 
     //necessary to init though?
     viewport_command_t cmd{};
+    render_state_t render_state = state->render_state;
 
     if (n)
     {
@@ -185,17 +186,17 @@ int lua_state_t::set_viewport()
             assert(lua_isnumber(l, i), "SetViewport() argument %d: expected number, got %t", i, i);
         }
 
-        cmd = viewport_command_t{(int)lua_tointeger(l, 1), (int)lua_tointeger(l, 2), (int)lua_tointeger(l, 3), (int)lua_tointeger(l, 4)};
+        cmd = viewport_command_t{(int)lua_tointeger(l, 1), (int)lua_tointeger(l, 2), (int)lua_tointeger(l, 3), (int)lua_tointeger(l, 4), render_state.renderer};
     }
     else
     {
         int width = -1;
         int height = -1;
 
-        SDL_GetWindowSize(state->render_state.window, &width, &height);
+        SDL_GetWindowSize(render_state.window, &width, &height);
 
 
-        cmd = viewport_command_t{0, 0, width, height};
+        cmd = viewport_command_t{0, 0, width, height, render_state.renderer};
     }
 
     command_list_t->add(&cmd);
