@@ -43,10 +43,10 @@ jobs:
         additionalCachedPaths: ${{ env.buildDir }}/vcpkg_installed
     
     - name: 'Run CMake with Ninja, install dependencies with vcpkg, build with CMake'
-        uses: lukka/run-cmake@v3
-        with:
-          cmakeListsOrSettingsJson: CMakeSettingsJson
-          useVcpkgToolchainFile: true
-          buildDirectory: ${{ env.buildDir }}
-          configurationRegexFilter: '${{ matrix.configuration }}'
+      uses: lukka/run-cmake@v3
+      with:
+        cmakeListsOrSettingsJson: CMakeSettingsJson
+        useVcpkgToolchainFile: true
+        buildDirectory: ${{ env.buildDir }}
+        configurationRegexFilter: '${{ matrix.configuration }}'
       
