@@ -10,3 +10,7 @@ add_executable (tests "tests.cpp")
 
 SET_PROJECT_WARNINGS(tests)
 target_link_libraries(tests PRIVATE tasks Catch2::Catch2)
+
+include(CTest)
+include(Catch)
+catch_discover_tests(foo)
