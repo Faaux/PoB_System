@@ -34,7 +34,7 @@ jobs:
     - uses: actions/cache@v2
       with:
         path: ${{ github.workspace }}/.nuget/packages
-        key: ${{ runner.os }}-nuget-${{ hashFiles('**/packages.lock.json') }}
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/vcpkg.json' , '**/x64-windows-custom.cmake') }}
         restore-keys: |
           ${{ runner.os }}-nuget-
 
