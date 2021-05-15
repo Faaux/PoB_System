@@ -178,7 +178,7 @@ int lua_state_t::set_viewport()
 
     //necessary to init though?
     viewport_command_t* cmd{};
-    render_state_t render_state = state->render_state;
+    const render_state_t& render_state = state->render_state;
 
     if (n)
     {
