@@ -35,8 +35,6 @@ jobs:
       with:
         path: ${{ github.workspace }}/.nuget/packages
         key: ${{ runner.os }}-nuget-${{ hashFiles('**/vcpkg.json' , '**/x64-windows-custom.cmake') }}
-        restore-keys: |
-          ${{ runner.os }}-nuget-
 
     - uses: actions/checkout@v2
 
