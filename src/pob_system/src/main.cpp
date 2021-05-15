@@ -29,6 +29,7 @@ int main(int argc, char* argv[])
 
     while (state.render_state.is_init)
     {
+        state.lua_state.clear_command_list();
         // Get the next event
         SDL_Event event;
         if (SDL_WaitEvent(&event))

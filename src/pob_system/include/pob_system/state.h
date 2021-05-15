@@ -12,6 +12,8 @@
 
 #include <pob_system/draw_layer.h>
 
+#include "commands/command_list.h"
+
 // Forward Declare
 struct lua_State;
 struct SDL_Window;
@@ -33,6 +35,7 @@ class lua_state_t
 
     void checkSubPrograms();
     int get_id() const { return id; }
+    void clear_command_list() const { command_list_t->clear(); }
 
     // Helpers to call into lua
     void on_init();
@@ -104,7 +107,7 @@ class lua_state_t
     int main_object_index = -1;
     std::string user_path;
 
-    void append_cmd(viewport_command_t);
+    command_list* command_list_t;
 };
 
 struct render_state_t
