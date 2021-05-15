@@ -1,0 +1,45 @@
+name: Check formatting
+
+on: [pull_request]
+
+jobs:
+    build:
+        name: Comment a pull_request
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v2
+
+            - uses: DoozyX/clang-format-lint-action@v0.12
+              with:
+                exclude: './src/tracy ./src/LZip'
+                clangFormatVersion: 12
+                inplace: True
+            
+            - name: Check if git is still clean
+              shell: 'bash'
+              run: |
+                set -euo pipefail
+
+                if [[ -n "$(git status --porcelain -unormal)" ]]; then
+                  echo 'CLANG_FORMAT_STATUS<<EOF' >> $GITHUB_ENV
+                  git diff --name-only >> $GITHUB_ENV
+                  echo 'EOF' >> $GITHUB_ENV
+                  exit 1
+                fi
+            
+            - name: Echo error
+              shell: 'bash'
+              run: echo $CLANG_FORMAT_STATUS
+
+            - name: Comment a pull_request
+              if: ${{ failure() }}
+              uses: mb2dev/github-action-comment-pull-request@1.0.0
+              with:
+                message: |
+                  `clang-format` left a non clean working directory:
+                  
+                  ```
+                  ${{ env.CLANG_FORMAT_STATUS }}
+                  ```
+                GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

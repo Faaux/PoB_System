@@ -1,16 +1,18 @@
 #pragma once
 #include <SDL.h>
+#include <pob_system/commands/viewport_command.h>
+#include <pob_system/draw_layer.h>
+#include <pob_system/font_rendering.h>
 #include <pob_system/image.h>
 #include <pob_system/lua_helper.h>
+#include <pob_system/work_pool.h>
 #include <tasks/static_thread_pool.h>
 #include <tasks/task.h>
-#include <pob_system/commands/viewport_command.h>
 
 #include <cstdint>
+#include <lua.hpp>
 #include <string>
 #include <vector>
-
-#include <pob_system/draw_layer.h>
 
 // Forward Declare
 struct lua_State;
@@ -35,8 +37,8 @@ class lua_state_t
     int get_id() const { return id; }
 
     // Helpers to call into lua
-    void on_init();
-    void on_frame();
+    cb::task<> on_init();
+    cb::task<> on_frame();
     void on_char(char c);
     void on_key_down(SDL_Keycode key);
     void on_key_up(SDL_Keycode key);
@@ -45,12 +47,14 @@ class lua_state_t
     void on_exit();
     bool can_exit();
 
+    std::vector<draw_string_command> test_commands;
+
    private:
     // Constants
     inline static const char* IMAGE_META_HANDLE = "uiimghandlemeta";
 
     // Helper
-    void assert(bool cond, const char* fmt, ...) const;
+    void assert_internal(bool cond, const char* fmt, ...) const;
     bool is_image_handle(int index) const;
     static lua_state_t* get_current_state(lua_State* l);
     ImageHandle& get_image_handle(int index) const;
@@ -78,6 +82,9 @@ class lua_state_t
     int set_draw_layer();
     int set_viewport();
 
+    int string_width();
+    int draw_string();
+
     // Image Handling
     int new_image_handle();
     int img_handle_gc(ImageHandle& handle);
@@ -95,7 +102,17 @@ class lua_state_t
     void log_lua_error();
 
     // SubScript Helpers
-    int call_main_from_sub(bool sync);
+    template <bool SYNC>
+    int call_main_from_sub();
+    void force_exit();
+    void cleanup_subtasks();
+
+    struct sub_task_t
+    {
+        std::shared_ptr<lua_state_t> state;
+        cb::task<> task;
+    };
+    std::vector<sub_task_t> sub_tasks;
 
     int id;
     state_t* state;
@@ -116,6 +133,7 @@ struct render_state_t
     std::string window_title;
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
+    font_manager_t font_manager;
 };
 
 // The global state of the application.
@@ -128,10 +146,76 @@ class state_t
     int argc;
     char** argv;
     // No getters and setters, know what you change
+    uint64_t current_frame = 0;
     lua_state_t lua_state;
     render_state_t render_state;
-    cb::static_thread_pool global_thread_pool{std::thread::hardware_concurrency() - 1};
+    cb::static_thread_pool global_thread_pool{4};
     cb::static_thread_pool main_lua_thread{1};
+    work_pool render_thread;
 
     static state_t* instance;
 };
+
+template <bool SYNC>
+inline int lua_state_t::call_main_from_sub()
+{
+    using return_type = std::conditional<SYNC, std::vector<lua_value>, void>::type;
+
+    const char* name = lua_tostring(l, lua_upvalueindex(1));
+
+    // Schedule call and wait for it
+    auto task = [](lua_State* l, const char* name) -> cb::task<return_type>
+    {
+        std::vector<lua_value> values = pop_save_values(l, 1);
+        std::string funcName = name;
+
+        co_await state_t::instance->main_lua_thread.schedule();
+        auto main_l = state_t::instance->lua_state.l;
+        int ret_n = lua_gettop(main_l) + 1;
+
+        // Build Function call
+        state_t::instance->lua_state.pushCallableOntoStack("OnSubCall");
+        lua_pushstring(main_l, funcName.c_str());
+
+        int pushed_count = push_saved_values(main_l, values);
+
+        if (lua_pcall(main_l, pushed_count + 2, LUA_MULTRET, 0))
+        {
+            state_t::instance->lua_state.log_lua_error();
+        }
+
+        if constexpr (SYNC)
+        {
+            // Get return values
+            int n = lua_gettop(main_l);
+            for (int i = ret_n; i <= n; i++)
+            {
+                state_t::instance->lua_state.assert_internal(lua_isnil(main_l, i) || lua_isboolean(main_l, i) ||
+                                                                 lua_isnumber(main_l, i) || lua_isstring(main_l, i),
+                                                             "OnSubCall() return %d: only nil, boolean, number and "
+                                                             "string can be returned to sub script",
+                                                             i - ret_n + 1);
+            }
+
+            co_return pop_save_values(main_l, ret_n);
+        }
+        else
+        {
+            (void)ret_n;
+        }
+    }(l, name);
+
+    if constexpr (SYNC)
+    {
+        auto return_values = cb::sync_wait(task);
+        return push_saved_values(l, return_values);
+    }
+    else
+    {
+        sub_task_t sub;
+        sub.task = std::move(task);
+        sub_tasks.push_back(std::move(sub));
+
+        return 0;
+    }
+}

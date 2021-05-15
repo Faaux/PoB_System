@@ -54,6 +54,7 @@ set_target_properties(LuaJIT::LuaJIT PROPERTIES
 
 find_package(SDL2 REQUIRED) 
 find_package(SDL2-image REQUIRED) 
+find_package(SDL2-ttf REQUIRED) 
 find_package(curl REQUIRED)
 find_package(ZLIB REQUIRED)
 
@@ -70,6 +71,7 @@ target_link_libraries(lcurl PRIVATE CURL::libcurl LuaJIT::LuaJIT)
 install(TARGETS lcurl)
 
 # Include sub-projects.
+add_subdirectory ("src/tracy")
 add_subdirectory ("src/LZip")
 add_subdirectory ("src/tasks")
 add_subdirectory ("src/pob_system")

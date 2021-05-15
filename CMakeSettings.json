@@ -7,9 +7,28 @@
       "inheritEnvironments": [ "msvc_x64_x64" ],
       "buildRoot": "${projectDir}\\out\\build\\${name}",
       "installRoot": "${projectDir}\\out\\install\\${name}",
-      "cmakeCommandArgs": "-DVCPKG_TARGET_TRIPLET=x64-windows-custom -DVCPKG_OVERLAY_TRIPLETS=${projectDir}\\triplets -DX_VCPKG_APPLOCAL_DEPS_INSTALL=1",
+      "cmakeCommandArgs": "",
+      "cmakeToolchain": "${env.VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
       "buildCommandArgs": "",
-      "ctestCommandArgs": ""
+      "ctestCommandArgs": "",
+      "variables": [
+        {
+          "name": "VCPKG_TARGET_TRIPLET",
+          "value": "x64-windows-custom"
+        },
+        {
+          "name": "VCPKG_OVERLAY_TRIPLETS",
+          "value": "${projectDir}\\vcpkg\\triplets"
+        },
+        {
+          "name": "X_VCPKG_APPLOCAL_DEPS_INSTALL",
+          "value": "1"
+        },
+        {
+          "name": "ENABLE_PROFILING",
+          "value": "0"
+        }
+      ]
     },
     {
       "name": "x64-Release",
@@ -17,10 +36,59 @@
       "configurationType": "RelWithDebInfo",
       "buildRoot": "${projectDir}\\out\\build\\${name}",
       "installRoot": "${projectDir}\\out\\install\\${name}",
-      "cmakeCommandArgs": "-DVCPKG_TARGET_TRIPLET=x64-windows-custom -DVCPKG_OVERLAY_TRIPLETS=${projectDir}\\triplets -DX_VCPKG_APPLOCAL_DEPS_INSTALL=1",
+      "cmakeCommandArgs": "",
+      "cmakeToolchain": "${env.VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
       "buildCommandArgs": "",
       "ctestCommandArgs": "",
-      "inheritEnvironments": [ "msvc_x64_x64" ]
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "variables": [
+        {
+          "name": "VCPKG_TARGET_TRIPLET",
+          "value": "x64-windows-custom"
+        },
+        {
+          "name": "VCPKG_OVERLAY_TRIPLETS",
+          "value": "${projectDir}\\vcpkg\\triplets"
+        },
+        {
+          "name": "X_VCPKG_APPLOCAL_DEPS_INSTALL",
+          "value": "1"
+        },
+        {
+          "name": "ENABLE_PROFILING",
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "name": "Profiler-Release",
+      "generator": "Ninja",
+      "configurationType": "RelWithDebInfo",
+      "buildRoot": "${projectDir}\\out\\build\\${name}",
+      "installRoot": "${projectDir}\\out\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "cmakeToolchain": "${env.VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "variables": [
+        {
+          "name": "VCPKG_TARGET_TRIPLET",
+          "value": "x64-windows-custom"
+        },
+        {
+          "name": "VCPKG_OVERLAY_TRIPLETS",
+          "value": "${projectDir}\\vcpkg\\triplets"
+        },
+        {
+          "name": "X_VCPKG_APPLOCAL_DEPS_INSTALL",
+          "value": "1"
+        },
+        {
+          "name": "ENABLE_PROFILING",
+          "value": "1"
+        }
+      ]
     }
   ]
 }

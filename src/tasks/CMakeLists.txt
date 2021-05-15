@@ -23,8 +23,9 @@ add_library (tasks STATIC
 
 	"src/spin_wait.hpp"
 	"src/spin_wait.cpp"
-	"src/win32.cpp")
+	"src/win32.cpp" "include/tasks/detail/sync_wait_task.hpp" "include/tasks/detail/lightweight_manual_reset_event.hpp" "src/lightweight_manual_reset_event.cpp")
 
 SET_PROJECT_WARNINGS(tasks)
 target_include_directories(tasks PUBLIC include)
+target_link_libraries(tasks PRIVATE Synchronization.lib)
 format_pre_built(tasks)

@@ -1,10 +1,12 @@
 #include <SDL.h>
+#include <pob_system/commands/viewport_command.h>
 #include <pob_system/keys.h>
 #include <pob_system/lua_helper.h>
 #include <pob_system/state.h>
 #include <pob_system/user_path_helper.h>
-#include <pob_system/commands/viewport_command.h>
 
+#include <Tracy.hpp>
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <lua.hpp>
@@ -67,9 +69,11 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
     LUA_GLOBAL_FUNCTION(Copy, copy);
     LUA_GLOBAL_FUNCTION(Paste, paste);
 
-
     LUA_GLOBAL_FUNCTION(SetDrawLayer, set_draw_layer);
     LUA_GLOBAL_FUNCTION(SetViewport, set_viewport);
+
+    LUA_GLOBAL_FUNCTION(DrawStringWidth, string_width);
+    LUA_GLOBAL_FUNCTION(DrawString, draw_string);
 #undef LUA_GLOBAL_FUNCTION
 
     // -- Class Like
@@ -83,13 +87,14 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
     lua_pushvalue(l, -1);  // Push image handle metatable
     lua_setfield(l, -2, "__index");
 
-#define LUA_IMAGE_FUNCTION(funcName)                                                                                  \
-    lua_pushcfunction(l,                                                                                              \
-                      [](lua_State* l) -> int                                                                         \
-                      {                                                                                               \
-                          auto state = get_current_state(l);                                                          \
-                          state->assert(state->is_image_handle(1), "imgHandle:%s() must be used on an image handle"); \
-                          return state->funcName(state->get_image_handle(1));                                         \
+#define LUA_IMAGE_FUNCTION(funcName)                                                                \
+    lua_pushcfunction(l,                                                                            \
+                      [](lua_State* l) -> int                                                       \
+                      {                                                                             \
+                          auto state = get_current_state(l);                                        \
+                          state->assert_internal(state->is_image_handle(1),                         \
+                                                 "imgHandle:%s() must be used on an image handle"); \
+                          return state->funcName(state->get_image_handle(1));                       \
                       });
 
     LUA_IMAGE_FUNCTION(img_handle_gc);
@@ -107,18 +112,13 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
 #undef LUA_IMAGE_FUNCTION
 
     // -- Stubs
-#define STUB(n)                             \
-    lua_pushcfunction(l,                    \
-                      [](lua_State*) -> int \
-                      {                     \
-                          printf(n "\n");   \
-                          return 0;         \
-                      });                   \
+#define STUB(n)                                                \
+    lua_pushcfunction(l, [](lua_State*) -> int { return 0; }); \
     lua_setglobal(l, n);
 
     STUB("SetDrawColor");
     STUB("DrawImage");
-    STUB("DrawStringWidth");
+    STUB("DrawImageQuad");
     STUB("ConExecute");
 #undef STUB
 
@@ -139,52 +139,62 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
     }
 }
 
-lua_state_t::~lua_state_t() { lua_close(l); }
+lua_state_t::~lua_state_t()
+{
+    for (auto& sub_task : sub_tasks)
+    {
+        cb::sync_wait(sub_task.task);
+    }
+    cleanup_subtasks();
+    assert(sub_tasks.empty());
+    lua_close(l);
+}
 
-void lua_state_t::append_cmd(viewport_command_t command) { printf("Func not imlemented"); }
+void lua_state_t::append_cmd(viewport_command_t command) {}
 
 int lua_state_t::set_draw_layer()
 {
     int n = lua_gettop(l);
 
-    assert(n >= 1, "Usage: SetDrawLayer({layer|nil}[, subLayer])");
-    assert(lua_isnumber(l, 1) || lua_isnil(l, 1), "SetDrawLayer() argument 1: expected number or nil, got %t", 1);
+    assert_internal(n >= 1, "Usage: SetDrawLayer({layer|nil}[, subLayer])");
+    assert_internal(lua_isnumber(l, 1) || lua_isnil(l, 1), "SetDrawLayer() argument 1: expected number or nil, got %t",
+                    1);
 
     if (n >= 2)
     {
-        assert(lua_isnumber(l, 2), "SetDrawLayer() argument 2: expected number, got %t", 2);
+        assert_internal(lua_isnumber(l, 2), "SetDrawLayer() argument 2: expected number, got %t", 2);
     }
 
     if (lua_isnil(l, 1))
     {
-        assert(n >= 2, "SetDrawLAyer(): mus provide subLayer if layer is nil");
-        draw_layer.set_sub_layer(lua_tointeger(l, 2));
+        assert_internal(n >= 2, "SetDrawLAyer(): mus provide subLayer if layer is nil");
+        draw_layer.set_sub_layer((int)lua_tointeger(l, 2));
     }
     else if (n >= 2)
     {
-        draw_layer.set_layer(lua_tointeger(l, 1), lua_tointeger(l, 2));
+        draw_layer.set_layer((int)lua_tointeger(l, 1), (int)lua_tointeger(l, 2));
     }
     else
     {
-        draw_layer.set_main_layer(lua_tointeger(l, 1));
+        draw_layer.set_main_layer((int)lua_tointeger(l, 1));
     }
 
     return 0;
 }
 
-int lua_state_t::set_viewport() 
+int lua_state_t::set_viewport()
 {
     int n = lua_gettop(l);
     if (n)
     {
-        assert(n >= 4, "Usage: SetViewport([x, y, width, height])");
+        assert_internal(n >= 4, "Usage: SetViewport([x, y, width, height])");
         for (int i = 1; i <= 4; i++)
         {
-            assert(lua_isnumber(l, i), "SetViewport() argument %d: expected number, got %t", i, i);
+            assert_internal(lua_isnumber(l, i), "SetViewport() argument %d: expected number, got %t", i, i);
         }
 
         append_cmd(viewport_command_t{(int)lua_tointeger(l, 1), (int)lua_tointeger(l, 2), (int)lua_tointeger(l, 3),
-                                     (int)lua_tointeger(l, 4)});
+                                      (int)lua_tointeger(l, 4)});
     }
     else
     {
@@ -198,183 +208,237 @@ int lua_state_t::set_viewport()
     return 0;
 }
 
+int lua_state_t::string_width()
+{
+    ZoneScoped;
+    int n = lua_gettop(l);
+    assert_internal(n >= 3, "Usage: DrawStringWidth(height, font, text)");
+    assert_internal(lua_isnumber(l, 1), "DrawStringWidth() argument 1: expected number, got %t", 1);
+    assert_internal(lua_isstring(l, 2), "DrawStringWidth() argument 2: expected string, got %t", 2);
+    assert_internal(lua_isstring(l, 3), "DrawStringWidth() argument 3: expected string, got %t", 3);
+    static const char* fontMap[4] = {"FIXED", "VAR", "VAR BOLD", NULL};
+
+    const int height = static_cast<int>(lua_tointeger(l, 1));
+    const font_type font =
+        static_cast<font_type>(luaL_checkoption(l, 2, font_manager_t::fontMap[0], font_manager_t::fontMap));
+    std::string_view text = lua_tostring(l, 3);
+    lua_pushinteger(l, state->render_state.font_manager.string_width(height, font, text));
+
+    return 1;
+}
+int lua_state_t::draw_string()
+{
+    ZoneScoped;
+    int n = lua_gettop(l);
+    assert_internal(n >= 6, "Usage: DrawString(left, top, align, height, font, text)");
+    assert_internal(lua_isnumber(l, 1), "DrawString() argument 1: expected number, got %t", 1);
+    assert_internal(lua_isnumber(l, 2), "DrawString() argument 2: expected number, got %t", 2);
+    assert_internal(lua_isstring(l, 3) || lua_isnil(l, 3), "DrawString() argument 3: expected string or nil, got %t",
+                    3);
+    assert_internal(lua_isnumber(l, 4), "DrawString() argument 4: expected number, got %t", 4);
+    assert_internal(lua_isstring(l, 5), "DrawString() argument 5: expected string, got %t", 5);
+    assert_internal(lua_isstring(l, 6), "DrawString() argument 6: expected string, got %t", 6);
+
+    const int left = static_cast<int>(lua_tonumber(l, 1));
+    const int top = static_cast<int>(lua_tonumber(l, 2));
+    font_alignment alignment =
+        static_cast<font_alignment>(luaL_checkoption(l, 3, font_manager_t::alignMap[0], font_manager_t::alignMap));
+    const int height = static_cast<int>(lua_tonumber(l, 4));
+    font_type font =
+        static_cast<font_type>(luaL_checkoption(l, 5, font_manager_t::fontMap[0], font_manager_t::fontMap));
+    std::string_view text = lua_tostring(l, 6);
+
+    auto command =
+        state->render_state.font_manager.create_draw_string_command(left, top, alignment, height, font, text);
+
+    // TODO: Save command for actual drawing
+    test_commands.push_back(std::move(command));
+
+    return 0;
+}
+
 void lua_state_t::do_file(const char* file)
 {
-    [&]() -> cb::task<>
-    {
-        co_await state->main_lua_thread.schedule();
-        if (luaL_dofile(l, file))
+    cb::sync_wait(
+        [&]() -> cb::task<>
         {
-            log_lua_error();
-        }
-    }()
-                 .join();
+            co_await state->main_lua_thread.schedule();
+            if (luaL_dofile(l, file))
+            {
+                log_lua_error();
+            }
+        }());
 }
 
-void lua_state_t::on_init()
+cb::task<> lua_state_t::on_init()
 {
-    // We do not run this on the lua main thread which is currently sleeping, because the window needs to be created on
-    // the main thread. If it isnt we will not receive events from it!
-
-    callParameterlessFunction("OnInit");
-}
-
-void lua_state_t::on_frame()
-{
-    [&]() -> cb::task<>
+    return [](lua_state_t* state) -> cb::task<>
     {
-        co_await state->main_lua_thread.schedule();
-        callParameterlessFunction("OnFrame");
-    }()
-                 .join();
+        co_await state->state->main_lua_thread.schedule();
+        state->callParameterlessFunction("OnInit");
+    }(this);
+}
+
+cb::task<> lua_state_t::on_frame()
+{
+    return [](lua_state_t* state) -> cb::task<>
+    {
+        co_await state->state->main_lua_thread.schedule();
+        ZoneScoped;
+        state->callParameterlessFunction("OnFrame");
+        state->cleanup_subtasks();
+    }(this);
 }
 
 void lua_state_t::on_char(char c)
 {
-    [c]() -> cb::task<>
-    {
-        co_await state_t::instance->main_lua_thread.schedule();
-        auto& main_state = state_t::instance->lua_state;
-        main_state.pushCallableOntoStack("OnChar");
-        lua_pushfstring(main_state.l, "%c", c);
-
-        if (lua_pcall(main_state.l, 2, 0, 0))
+    cb::sync_wait(
+        [c]() -> cb::task<>
         {
-            main_state.log_lua_error();
-        }
-    }()
-                 .join();
+            co_await state_t::instance->main_lua_thread.schedule();
+            auto& main_state = state_t::instance->lua_state;
+            main_state.pushCallableOntoStack("OnChar");
+            lua_pushfstring(main_state.l, "%c", c);
+
+            if (lua_pcall(main_state.l, 2, 0, 0))
+            {
+                main_state.log_lua_error();
+            }
+        }());
 }
 void lua_state_t::on_key_down(SDL_Keycode key)
 {
-    [key]() -> cb::task<>
-    {
-        co_await state_t::instance->main_lua_thread.schedule();
-        auto& main_state = state_t::instance->lua_state;
-        main_state.pushCallableOntoStack("OnKeyDown");
-
-        auto text = get_key_name(key);
-        if (text.empty())
+    cb::sync_wait(
+        [key]() -> cb::task<>
         {
-            lua_pushfstring(main_state.l, "%c", key);
-        }
-        else
-        {
-            lua_pushstring(main_state.l, text.data());
-        }
+            co_await state_t::instance->main_lua_thread.schedule();
+            auto& main_state = state_t::instance->lua_state;
+            main_state.pushCallableOntoStack("OnKeyDown");
 
-        lua_pushboolean(main_state.l, false);
+            auto text = get_key_name(key);
+            if (text.empty())
+            {
+                lua_pushfstring(main_state.l, "%c", key);
+            }
+            else
+            {
+                lua_pushstring(main_state.l, text.data());
+            }
 
-        if (lua_pcall(main_state.l, 3, 0, 0))
-        {
-            main_state.log_lua_error();
-        }
-    }()
-                   .join();
+            lua_pushboolean(main_state.l, false);
+
+            if (lua_pcall(main_state.l, 3, 0, 0))
+            {
+                main_state.log_lua_error();
+            }
+        }());
 }
 void lua_state_t::on_key_up(SDL_Keycode key)
 {
-    [key]() -> cb::task<>
-    {
-        co_await state_t::instance->main_lua_thread.schedule();
-        auto& main_state = state_t::instance->lua_state;
-        main_state.pushCallableOntoStack("OnKeyUp");
+    cb::sync_wait(
+        [key]() -> cb::task<>
+        {
+            co_await state_t::instance->main_lua_thread.schedule();
+            auto& main_state = state_t::instance->lua_state;
+            main_state.pushCallableOntoStack("OnKeyUp");
 
-        auto text = get_key_name(key);
-        if (text.empty())
-        {
-            lua_pushfstring(main_state.l, "%c", key);
-        }
-        else
-        {
-            lua_pushstring(main_state.l, text.data());
-        }
+            auto text = get_key_name(key);
+            if (text.empty())
+            {
+                lua_pushfstring(main_state.l, "%c", key);
+            }
+            else
+            {
+                lua_pushstring(main_state.l, text.data());
+            }
 
-        if (lua_pcall(main_state.l, 2, 0, 0))
-        {
-            main_state.log_lua_error();
-        }
-    }()
-                   .join();
+            if (lua_pcall(main_state.l, 2, 0, 0))
+            {
+                main_state.log_lua_error();
+            }
+        }());
 }
 
 void lua_state_t::on_mouse_down(int mb, bool double_click)
 {
-    [mb, double_click]() -> cb::task<>
-    {
-        co_await state_t::instance->main_lua_thread.schedule();
-        auto& main_state = state_t::instance->lua_state;
-        main_state.pushCallableOntoStack("OnKeyDown");
-
-        auto text = get_mouse_name(mb);
-        lua_pushstring(main_state.l, text.data());
-
-        lua_pushboolean(main_state.l, double_click);
-
-        if (lua_pcall(main_state.l, 3, 0, 0))
+    cb::sync_wait(
+        [mb, double_click]() -> cb::task<>
         {
-            main_state.log_lua_error();
-        }
-    }()
-                                .join();
+            co_await state_t::instance->main_lua_thread.schedule();
+            auto& main_state = state_t::instance->lua_state;
+            main_state.pushCallableOntoStack("OnKeyDown");
+
+            auto text = get_mouse_name(mb);
+            lua_pushstring(main_state.l, text.data());
+
+            lua_pushboolean(main_state.l, double_click);
+
+            if (lua_pcall(main_state.l, 3, 0, 0))
+            {
+                main_state.log_lua_error();
+            }
+        }());
 }
 
 void lua_state_t::on_mouse_up(int mb)
 {
-    [mb]() -> cb::task<>
-    {
-        co_await state_t::instance->main_lua_thread.schedule();
-        auto& main_state = state_t::instance->lua_state;
-        main_state.pushCallableOntoStack("OnKeyUp");
-
-        auto text = get_mouse_name(mb);
-        lua_pushstring(main_state.l, text.data());
-
-        if (lua_pcall(main_state.l, 2, 0, 0))
+    cb::sync_wait(
+        [mb]() -> cb::task<>
         {
-            main_state.log_lua_error();
-        }
-    }()
-                  .join();
+            co_await state_t::instance->main_lua_thread.schedule();
+            auto& main_state = state_t::instance->lua_state;
+            main_state.pushCallableOntoStack("OnKeyUp");
+
+            auto text = get_mouse_name(mb);
+            lua_pushstring(main_state.l, text.data());
+
+            if (lua_pcall(main_state.l, 2, 0, 0))
+            {
+                main_state.log_lua_error();
+            }
+        }());
 }
 
 void lua_state_t::on_exit()
 {
-    []() -> cb::task<>
-    {
-        co_await state_t::instance->main_lua_thread.schedule();
-        auto& main_state = state_t::instance->lua_state;
-        main_state.pushCallableOntoStack("OnExit");
-        if (lua_pcall(main_state.l, 1, 0, 0))
+    cb::sync_wait(
+        []() -> cb::task<>
         {
-            main_state.log_lua_error();
-        }
-    }()
-                .join();
-}
-bool lua_state_t::can_exit()
-{
-    return []() -> cb::task<bool>
-    {
-        co_await state_t::instance->main_lua_thread.schedule();
-        bool ret = true;
-        auto& main_state = state_t::instance->lua_state;
-        main_state.pushCallableOntoStack("CanExit");
-        if (lua_pcall(main_state.l, 1, 0, 0))
-        {
-            main_state.log_lua_error();
-        }
-        ret = !!lua_toboolean(main_state.l, -1);
-        lua_pop(main_state.l, 1);
-        co_return ret;
-    }()
-                       .join();
+            co_await state_t::instance->main_lua_thread.schedule();
+            auto& main_state = state_t::instance->lua_state;
+            main_state.pushCallableOntoStack("OnExit");
+            if (lua_pcall(main_state.l, 1, 0, 0))
+            {
+                main_state.log_lua_error();
+            }
+            state_t::instance->lua_state.force_exit();
+        }());
 }
 
-void lua_state_t::assert(bool cond, const char* fmt, ...) const
+bool lua_state_t::can_exit()
+{
+    return cb::sync_wait(
+        []() -> cb::task<bool>
+        {
+            co_await state_t::instance->main_lua_thread.schedule();
+            bool ret = true;
+            auto& main_state = state_t::instance->lua_state;
+            main_state.pushCallableOntoStack("CanExit");
+            if (lua_pcall(main_state.l, 1, 1, 0))
+            {
+                main_state.log_lua_error();
+            }
+            ret = lua_toboolean(main_state.l, -1);
+            lua_pop(main_state.l, 1);
+            co_return ret;
+        }());
+}
+
+void lua_state_t::assert_internal(bool cond, const char* fmt, ...) const
 {
     if (!cond)
     {
+        __debugbreak();
         va_list va;
         va_start(va, fmt);
         lua_pushvfstring(l, fmt, va);
@@ -453,12 +517,12 @@ int lua_state_t::get_time()
 
 int lua_state_t::render_init()
 {
-    if (!state)
-    {
-        fprintf(stderr, "Can not create rendersystem with no valid state");
-        return 0;
-    }
-    state->render_state.init();
+    cb::sync_wait(
+        []() -> cb::task<>
+        {
+            co_await state_t::instance->render_thread.schedule();
+            state_t::instance->render_state.init();
+        }());
     return 0;
 }
 
@@ -485,7 +549,7 @@ int lua_state_t::con_print_f()
 int lua_state_t::load_module()
 {
     int n = lua_gettop(l);
-    assert(n >= 1 && lua_isstring(l, 1), "LoadModule wrong call.");
+    assert_internal(n >= 1 && lua_isstring(l, 1), "LoadModule wrong call.");
 
     std::string fileName(lua_tostring(l, 1));
     constexpr std::string_view ext(".lua");
@@ -495,7 +559,7 @@ int lua_state_t::load_module()
     }
 
     int err = luaL_loadfile(l, fileName.c_str());
-    assert(err == 0, "LoadModule() error loading '%s':\n%s", fileName.c_str(), lua_tostring(l, -1));
+    assert_internal(err == 0, "LoadModule() error loading '%s':\n%s", fileName.c_str(), lua_tostring(l, -1));
     lua_replace(l, 1);  // Replace module name with module main chunk
     lua_call(l, n - 1, LUA_MULTRET);
     return lua_gettop(l);
@@ -504,8 +568,8 @@ int lua_state_t::load_module()
 int lua_state_t::p_load_module()
 {
     int n = lua_gettop(l);
-    assert(n >= 1, "Usage: PLoadModule(name[, ...])");
-    assert(lua_isstring(l, 1), "PLoadModule() argument 1: expected string, got %t", 1);
+    assert_internal(n >= 1, "Usage: PLoadModule(name[, ...])");
+    assert_internal(lua_isstring(l, 1), "PLoadModule() argument 1: expected string, got %t", 1);
     std::string fileName(lua_tostring(l, 1));
     constexpr std::string_view ext(".lua");
     if (!std::equal(ext.rbegin(), ext.rend(), fileName.rbegin()))
@@ -532,8 +596,8 @@ int lua_state_t::p_load_module()
 int lua_state_t::p_call()
 {
     int n = lua_gettop(l);
-    assert(n >= 1, "Usage: PCall(func[, ...])");
-    assert(lua_isfunction(l, 1), "PCall() argument 1: expected function, got %t", 1);
+    assert_internal(n >= 1, "Usage: PCall(func[, ...])");
+    assert_internal(lua_isfunction(l, 1), "PCall() argument 1: expected function, got %t", 1);
     lua_getfield(l, LUA_REGISTRYINDEX, "traceback");
     lua_insert(l, 1);  // Insert traceback function at start of stack
     int err = lua_pcall(l, n - 1, LUA_MULTRET, 1);
@@ -549,27 +613,25 @@ int lua_state_t::p_call()
 
 int lua_state_t::launch_sub_script()
 {
-    int sub_id = -1;
-
-    [[maybe_unused]] auto task = [&]() -> cb::task<>
+    sub_task_t sub_task;
+    sub_task.state = std::make_shared<lua_state_t>(nullptr);
+    sub_task.task = [&](std::shared_ptr<lua_state_t> sub_in) -> cb::task<>
     {
         int n = lua_gettop(l);
-        assert(n >= 3, "Usage: LaunchSubScript(scriptText, funcList, subList[, ...])");
+        assert_internal(n >= 3, "Usage: LaunchSubScript(scriptText, funcList, subList[, ...])");
         for (int i = 1; i <= 3; i++)
         {
-            assert(lua_isstring(l, i), "LaunchSubScript() argument %d: expected string, got %t", i, i);
+            assert_internal(lua_isstring(l, i), "LaunchSubScript() argument %d: expected string, got %t", i, i);
         }
         for (int i = 4; i <= n; i++)
         {
-            assert(lua_isnil(l, i) || lua_isboolean(l, i) || lua_isnumber(l, i) || lua_isstring(l, i),
-                   "LaunchSubScript() argument %d: only nil, boolean, number and string types can be passed to sub "
-                   "script",
-                   i);
+            assert_internal(
+                lua_isnil(l, i) || lua_isboolean(l, i) || lua_isnumber(l, i) || lua_isstring(l, i),
+                "LaunchSubScript() argument %d: only nil, boolean, number and string types can be passed to sub "
+                "script",
+                i);
         }
-
-        lua_state_t sub(nullptr);
-        sub_id = sub.get_id();
-
+        auto& sub = *sub_in;
         int argsCount = n - 3;
 
         const char* script = lua_tostring(l, 1);
@@ -581,7 +643,7 @@ int lua_state_t::launch_sub_script()
         std::string async_override_calls = lua_tostring(l, 3);  // Async call to main
 
         // Put us on another thread, do not use any captured reference beyond this point
-        co_await state->global_thread_pool.schedule();
+        co_await state_t::instance->global_thread_pool.schedule();
 
         // Override global functions that should be called on the main thread
         {
@@ -591,7 +653,7 @@ int lua_state_t::launch_sub_script()
             {
                 lua_pushstring(sub.l, token.c_str());
                 lua_pushcclosure(
-                    sub.l, [](lua_State* local) -> int { return get_current_state(local)->call_main_from_sub(true); },
+                    sub.l, [](lua_State* local) -> int { return get_current_state(local)->call_main_from_sub<true>(); },
                     1);
                 lua_setglobal(sub.l, token.c_str());
             }
@@ -604,8 +666,8 @@ int lua_state_t::launch_sub_script()
             {
                 lua_pushstring(sub.l, token.c_str());
                 lua_pushcclosure(
-                    sub.l, [](lua_State* local) -> int { return get_current_state(local)->call_main_from_sub(false); },
-                    1);
+                    sub.l,
+                    [](lua_State* local) -> int { return get_current_state(local)->call_main_from_sub<false>(); }, 1);
                 lua_setglobal(sub.l, token.c_str());
             }
         }
@@ -637,9 +699,11 @@ int lua_state_t::launch_sub_script()
                 main_state.log_lua_error();
             }
         }
-    }();
+    }(sub_task.state);
 
-    lua_pushinteger(l, sub_id);
+    lua_pushinteger(l, sub_task.state->get_id());
+
+    sub_tasks.push_back(std::move(sub_task));
 
     return 1;
 }
@@ -662,8 +726,8 @@ int lua_state_t::get_user_path()
 int lua_state_t::make_dir()
 {
     int n = lua_gettop(l);
-    assert(n >= 1, "Usage: MakeDir(path)");
-    assert(lua_isstring(l, 1), "MakeDir() argument 1: expected string, got %t", 1);
+    assert_internal(n >= 1, "Usage: MakeDir(path)");
+    assert_internal(lua_isstring(l, 1), "MakeDir() argument 1: expected string, got %t", 1);
 
     std::error_code ec;
     if (!std::filesystem::create_directory(lua_tostring(l, 1), ec))
@@ -680,7 +744,7 @@ int lua_state_t::make_dir()
 }
 int lua_state_t::screen_size()
 {
-    assert(state, "Can only be called from the main thread");
+    assert_internal(state, "Can only be called from the main thread");
     int w, h;
     SDL_GetWindowSize(state->render_state.window, &w, &h);
 
@@ -692,25 +756,45 @@ int lua_state_t::screen_size()
 int lua_state_t::is_key_down_callback()
 {
     int n = lua_gettop(l);
-    assert(n >= 1, "Usage: IsKeyDown(keyName)");
-    assert(lua_isstring(l, 1), "IsKeyDown() argument 1: expected string, got %t", 1);
+    assert_internal(n >= 1, "Usage: IsKeyDown(keyName)");
+    assert_internal(lua_isstring(l, 1), "IsKeyDown() argument 1: expected string, got %t", 1);
     size_t len;
     const char* kname = lua_tolstring(l, 1, &len);
-    assert(len >= 1, "IsKeyDown() argument 1: string is empty", 1);
+    assert_internal(len >= 1, "IsKeyDown() argument 1: string is empty", 1);
 
     // TODO: Convert kname to key and check if it is actually down
-    auto code = get_keycode(kname);
-    assert(code != SDLK_UNKNOWN, "IsKeyDown(): unrecognised key name");
-    auto kb_state = SDL_GetKeyboardState(nullptr);
+    auto keyboard_code = get_keycode(kname);
+    auto mouse_code = get_mouse_key(kname);
+    if (keyboard_code != SDLK_UNKNOWN)
+    {
+        auto kb_state = SDL_GetKeyboardState(nullptr);
 
-    bool is_down = kb_state[SDL_GetScancodeFromKey(code)];
-    lua_pushboolean(l, is_down);
-    return 1;
+        bool is_down = kb_state[SDL_GetScancodeFromKey(keyboard_code)];
+        lua_pushboolean(l, is_down);
+        return 1;
+    }
+    else if (mouse_code != 0)
+    {
+        // Ignore MouseWheel
+        if (mouse_code < SDL_BUTTON_WHEELUP)
+        {
+            auto mouse_state = SDL_GetMouseState(nullptr, nullptr);
+            bool is_down = mouse_state & SDL_BUTTON(mouse_code);
+            lua_pushboolean(l, is_down);
+        }
+        else
+        {
+            lua_pushboolean(l, false);
+        }
+        return 1;
+    }
+    assert_internal(false, "IsKeyDown(): unrecognised key name");
+    return 0;
 }
 
 int lua_state_t::cursor_pos()
 {
-    assert(state, "Can only be called from the main thread");
+    assert_internal(state, "Can only be called from the main thread");
     int x, y;
     SDL_GetMouseState(&x, &y);
 
@@ -722,8 +806,8 @@ int lua_state_t::cursor_pos()
 int lua_state_t::copy()
 {
     int n = lua_gettop(l);
-    assert(n >= 1, "Usage: Copy(string)");
-    assert(lua_isstring(l, 1), "Copy() argument 1: expected string, got %t", 1);
+    assert_internal(n >= 1, "Usage: Copy(string)");
+    assert_internal(lua_isstring(l, 1), "Copy() argument 1: expected string, got %t", 1);
     SDL_SetClipboardText(lua_tostring(l, 1));
     return 0;
 }
@@ -755,8 +839,8 @@ int lua_state_t::img_handle_gc(ImageHandle& handle)
 int lua_state_t::img_handle_load(ImageHandle& handle)
 {
     int n = lua_gettop(l);
-    assert(n >= 1, "Usage: imgHandle:Load(fileName[, flag1[, flag2...]])");
-    assert(lua_isstring(l, 1), "imgHandle:Load() argument 1: expected string, got %t", 1);
+    assert_internal(n >= 1, "Usage: imgHandle:Load(fileName[, flag1[, flag2...]])");
+    assert_internal(lua_isstring(l, 1), "imgHandle:Load() argument 1: expected string, got %t", 1);
 
     const char* fileName = lua_tostring(l, 1);
     bool mipmaps = true;
@@ -783,7 +867,7 @@ int lua_state_t::img_handle_load(ImageHandle& handle)
         }
         else
         {
-            assert(false, "imgHandle:Load(): unrecognised flag '%s'", flag);
+            assert_internal(false, "imgHandle:Load(): unrecognised flag '%s'", flag);
         }
     }
     handle.image = std::make_unique<Image>(fileName, mipmaps, clamp, async);
@@ -857,57 +941,26 @@ void lua_state_t::callParameterlessFunction(const char* name)
 
 void lua_state_t::log_lua_error() { fprintf(stderr, "%d: %s\n", id, lua_tostring(l, -1)); }
 
-int lua_state_t::call_main_from_sub(bool sync)
+void lua_state_t::force_exit()
 {
-    const char* name = lua_tostring(l, lua_upvalueindex(1));
-
-    // Schedule call and wait for it
-    auto task = [](lua_State* l, const char* name, bool sync) -> cb::task<std::vector<lua_value> >
+    for (auto& task : sub_tasks)
     {
-        std::vector<lua_value> values = pop_save_values(l, 1);
-        std::string funcName = name;
-
-        co_await state_t::instance->main_lua_thread.schedule();
-        auto main_l = state_t::instance->lua_state.l;
-        int ret_n = lua_gettop(main_l) + 1;
-
-        // Build Function call
-        state_t::instance->lua_state.pushCallableOntoStack("OnSubCall");
-        lua_pushstring(main_l, funcName.c_str());
-
-        int pushed_count = push_saved_values(main_l, values);
-
-        if (lua_pcall(main_l, pushed_count + 2, LUA_MULTRET, 0))
-        {
-            state_t::instance->lua_state.log_lua_error();
-        }
-
-        std::vector<lua_value> return_values;
-        if (sync)
-        {
-            // Get return values
-            int n = lua_gettop(main_l);
-            for (int i = ret_n; i <= n; i++)
+        lua_sethook(
+            task.state->l,
+            [](lua_State* L, lua_Debug*)
             {
-                state_t::instance->lua_state.assert(lua_isnil(main_l, i) || lua_isboolean(main_l, i) ||
-                                                        lua_isnumber(main_l, i) || lua_isstring(main_l, i),
-                                                    "OnSubCall() return %d: only nil, boolean, number and "
-                                                    "string can be returned to sub script",
-                                                    i - ret_n + 1);
-            }
-
-            return_values = pop_save_values(main_l, ret_n);
-        }
-        co_return return_values;
-    }(l, name, sync);
-
-    if (sync)
-    {
-        auto return_values = task.join();
-        return push_saved_values(l, return_values);
+                lua_pushstring(L, "dummy");
+                lua_error(L);
+            },
+            LUA_MASKLINE, 0);
     }
+}
 
-    return 0;
+void lua_state_t::cleanup_subtasks()
+{
+    sub_tasks.erase(
+        std::remove_if(sub_tasks.begin(), sub_tasks.end(), [](const auto& state) { return state.task.await_ready(); }),
+        sub_tasks.end());
 }
 
 render_state_t::~render_state_t()
@@ -929,11 +982,11 @@ void render_state_t::init()
     // TODO: Safe and load position size etc.
 
     window = SDL_CreateWindow(window_title.c_str(),
-                              SDL_WINDOWPOS_UNDEFINED,  // initial x position
-                              SDL_WINDOWPOS_UNDEFINED,  // initial y position
-                              640,                      // width, in pixels
-                              480,                      // height, in pixels
-                              SDL_WINDOW_OPENGL         // flags - see below
+                              SDL_WINDOWPOS_UNDEFINED,                  // initial x position
+                              SDL_WINDOWPOS_UNDEFINED,                  // initial y position
+                              640,                                      // width, in pixels
+                              480,                                      // height, in pixels
+                              SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE  // flags - see below
     );
 
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
