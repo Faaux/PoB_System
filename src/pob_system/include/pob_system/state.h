@@ -35,6 +35,7 @@ class lua_state_t
 
     void checkSubPrograms();
     int get_id() const { return id; }
+    void clear_command_list() const { command_list_t->clear(); }
 
     // Helpers to call into lua
     void on_init();

@@ -17,6 +17,8 @@ lua_state_t::lua_state_t(state_t* state) : state(state)
 
     l = luaL_newstate();
 
+    command_list_t = new command_list{};
+
     lua_pushlightuserdata(l, (void*)this);
     lua_rawseti(l, LUA_REGISTRYINDEX, 0);
     lua_pushcfunction(l, traceback);
@@ -175,7 +177,7 @@ int lua_state_t::set_viewport()
     const int n = lua_gettop(l);
 
     //necessary to init though?
-    viewport_command_t cmd{};
+    viewport_command_t* cmd{};
     render_state_t render_state = state->render_state;
 
     if (n)
@@ -186,7 +188,7 @@ int lua_state_t::set_viewport()
             assert(lua_isnumber(l, i), "SetViewport() argument %d: expected number, got %t", i, i);
         }
 
-        cmd = viewport_command_t{(int)lua_tointeger(l, 1), (int)lua_tointeger(l, 2), (int)lua_tointeger(l, 3), (int)lua_tointeger(l, 4), render_state.renderer};
+        cmd = new viewport_command_t{(int)lua_tointeger(l, 1), (int)lua_tointeger(l, 2), (int)lua_tointeger(l, 3), (int)lua_tointeger(l, 4), render_state.renderer};
     }
     else
     {
@@ -196,10 +198,10 @@ int lua_state_t::set_viewport()
         SDL_GetWindowSize(render_state.window, &width, &height);
 
 
-        cmd = viewport_command_t{0, 0, width, height, render_state.renderer};
+        cmd = new viewport_command_t{0, 0, width, height, render_state.renderer};
     }
 
-    command_list_t->add(&cmd);
+    command_list_t->add(cmd);
 
     return 0;
 }

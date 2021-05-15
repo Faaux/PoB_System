@@ -39,4 +39,14 @@ struct command_list
     }
 
     std::vector<std::array<char, sizeof(generic_storage)>> commands;
+
+    void clear()
+    {
+        for (auto& command : commands)
+        {
+            delete command.data();
+        }
+
+        commands.clear();
+    }
 };
