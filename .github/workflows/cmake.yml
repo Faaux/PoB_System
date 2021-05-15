@@ -31,12 +31,12 @@ jobs:
     env:
       buildDir: '${{ github.workspace }}/build'
     steps:
+    - uses: actions/checkout@v2
+
     - uses: actions/cache@v2
       with:
         path: ${{ github.workspace }}/.nuget/packages
         key: ${{ runner.os }}-nuget-${{ hashFiles('**/vcpkg.json' , '**/x64-windows-custom.cmake') }}
-
-    - uses: actions/checkout@v2
 
     - name: Install vcpkg
       shell: 'bash'
